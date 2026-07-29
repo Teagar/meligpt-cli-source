@@ -1,0 +1,39 @@
+services:
+  meligpt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: meligpt-cli:local
+    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "${MELIGPT_SERVER_PORT:-8080}:8080"
+    environment:
+      MELIGPT_LOG_LEVEL: ${MELIGPT_LOG_LEVEL:-INFO}
+      MELIGPT_MODEL: ${MELIGPT_MODEL:-gpt-5.6-sol}
+    volumes:
+      - meligpt-config:/data/config
+      - meligpt-files:/data/files
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/meligpt
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  meligpt-config:
+  meligpt-files:
