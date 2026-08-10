@@ -2,12 +2,17 @@
 
 Uso:
     meligpt [opções] [mensagem]
+    meligpt chat [opções] [mensagem]
     meligpt import-har [ARQUIVO.har]
     meligpt serve  # inicia o servidor HTTP/SSE opcional
+    meligpt models [--provider P] [--endpoint E]
+    meligpt providers
 
 Preserva os contratos de linha de comando do script Bash original:
 ``-f/--file``, ``--auto-files``, ``--no-discovery``, leitura da mensagem
-via argumento ou stdin interativo quando omitida.
+via argumento ou stdin interativo quando omitida. ``chat`` é o
+subcomando padrão: ``meligpt "explique X"`` é equivalente a
+``meligpt chat "explique X"`` (ver :func:`_normalize_argv`).
 """
 
 from __future__ import annotations
@@ -18,9 +23,11 @@ import sys
 from pathlib import Path
 
 from meligpt.auth.har_importer import import_har
+from meligpt.catalog import ModelCatalog, resolve_model
 from meligpt.chat.service import (
     AmbiguousDiscoveryError,
     ChatFinished,
+    GeneratedImage,
     InfoMessage,
     MirroredToolResult,
     TextChunk,
@@ -32,6 +39,28 @@ from meligpt.exceptions import MeliGPTError
 from meligpt.logging import configure_logging, new_request_id
 from meligpt.tools.registry import build_default_registry
 from meligpt.ui import console
+
+KNOWN_COMMANDS = {"chat", "import-har", "serve", "models", "providers"}
+
+
+def _normalize_argv(argv: list[str]) -> list[str]:
+    """Insere o subcomando ``chat`` implícito quando omitido.
+
+    ``argparse`` não tem um jeito nativo de misturar "subcomando padrão"
+    com ``add_subparsers`` sem essa normalização manual — sem ela, o
+    positional de ``subparsers`` (que vem primeiro) engole o primeiro
+    token e tenta interpretá-lo como nome de subcomando, quebrando tanto
+    ``meligpt "mensagem"`` quanto ``meligpt --model x "mensagem"``.
+    """
+
+    if not argv:
+        return ["chat"]
+    first = argv[0]
+    if first in ("-h", "--help"):
+        return argv
+    if first in KNOWN_COMMANDS:
+        return argv
+    return ["chat", *argv]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,8 +83,13 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--host", default=None)
     serve_parser.add_argument("--port", type=int, default=None)
 
-    # Compatibilidade: `meligpt "mensagem"` sem subcomando == `meligpt chat "mensagem"`.
-    _add_chat_arguments(parser)
+    models_parser = subparsers.add_parser(
+        "models", help="Lista o catálogo de modelos multi-provedor."
+    )
+    models_parser.add_argument("--provider", default=None)
+    models_parser.add_argument("--endpoint", default=None)
+
+    subparsers.add_parser("providers", help="Lista os provedores/rotas conhecidos.")
 
     return parser
 
@@ -64,11 +98,18 @@ def _add_chat_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-f", "--file", action="append", dest="files", default=[])
     parser.add_argument("--auto-files", action="store_true")
     parser.add_argument("--no-discovery", action="store_true")
+    parser.add_argument(
+        "--model", default=None, help="Id de modelo do catálogo (ver `meligpt models`)."
+    )
+    parser.add_argument(
+        "--endpoint", default=None, help="Provedor lógico do catálogo (ver `meligpt providers`)."
+    )
     parser.add_argument("message", nargs="*")
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    argv = _normalize_argv(argv)
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -79,6 +120,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == "import-har":
         return _run_import_har(args, settings)
+
+    if command == "models":
+        return asyncio.run(_run_models_command(args, settings))
+
+    if command == "providers":
+        return asyncio.run(_run_providers_command(settings))
+
+    try:
+        settings.resolved_files_dir()  # falha rápido em configuração insegura (ex.: FILES_DIR=/)
+    except MeliGPTError as exc:
+        console.error(exc.message)
+        return 1
+
     if command == "serve":
         return _run_serve(args, settings)
     return asyncio.run(_run_chat_command(args, settings))
@@ -104,6 +158,27 @@ def _run_import_har(args: argparse.Namespace, settings: Settings) -> int:
 
     console.info(f"Credenciais importadas com segurança em: {path}")
     console.warning("O HAR contém segredos; apague-o quando não for mais necessário.")
+    return 0
+
+
+async def _run_models_command(args: argparse.Namespace, settings: Settings) -> int:
+    catalog = ModelCatalog(settings)
+    models = await catalog.list_models(provider=args.provider, endpoint=args.endpoint)
+    if not models:
+        console.info("nenhum modelo encontrado.")
+        return 0
+    for model in models:
+        console.info(
+            f"{model.id}  [{model.provider} -> {model.payload_endpoint}, "
+            f"rota={model.route}, tipo={model.type}]"
+        )
+    return 0
+
+
+async def _run_providers_command(settings: Settings) -> int:
+    catalog = ModelCatalog(settings)
+    for provider in await catalog.list_providers():
+        console.info(f"{provider.id}  [{provider.route}]")
     return 0
 
 
@@ -136,6 +211,12 @@ async def _run_chat_command(args: argparse.Namespace, settings: Settings) -> int
         return 1
 
     registry = build_default_registry()
+    catalog = ModelCatalog(settings)
+    try:
+        model_info = await resolve_model(catalog, model_id=args.model, provider=args.endpoint)
+    except MeliGPTError as exc:
+        console.error(exc.message)
+        return 1
 
     async def prompt_for_har() -> Path | None:
         if not sys.stdin.isatty():
@@ -159,6 +240,7 @@ async def _run_chat_command(args: argparse.Namespace, settings: Settings) -> int
             discovery_enabled=not args.no_discovery,
             interactive=sys.stdin.isatty(),
             prompt_for_har=prompt_for_har,
+            model_info=model_info,
         ):
             if isinstance(event, TextChunk):
                 console.stream_chunk(event.text)
@@ -169,6 +251,8 @@ async def _run_chat_command(args: argparse.Namespace, settings: Settings) -> int
                 console.warning(event.message)
             elif isinstance(event, MirroredToolResult):
                 console.tool_result(event.name, event.success, event.message)
+            elif isinstance(event, GeneratedImage):
+                console.info(f"Imagem gerada salva em: {event.virtual_path}")
             elif isinstance(event, ChatFinished):
                 console.stream_end()
                 if not event.had_text:

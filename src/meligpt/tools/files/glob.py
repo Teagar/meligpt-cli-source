@@ -13,9 +13,8 @@ from typing import Any
 
 from meligpt.config import Settings
 from meligpt.exceptions import NotADirectoryToolError, ToolValidationError
+from meligpt.filesystem.exclusions import DEFAULT_EXCLUDED_DIRS as _EXCLUDED_DIRS
 from meligpt.filesystem.security import resolve_secure
-
-_EXCLUDED_DIRS = {".git", "node_modules", "__pycache__", ".venv"}
 
 
 def _translate_glob(pattern: str) -> str:

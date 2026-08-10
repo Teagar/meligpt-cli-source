@@ -20,8 +20,10 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.responses import JSONResponse
 
 from meligpt.api.schemas import ChatRequest, HealthResponse
+from meligpt.catalog import ModelCatalog, resolve_model
 from meligpt.chat.service import (
     ChatFinished,
+    GeneratedImage,
     InfoMessage,
     MirroredToolResult,
     TextChunk,
@@ -62,12 +64,20 @@ async def manual_refresh():
     return {"success": True, "message": "token renovado"}
 
 
-def build_chat_router(settings: Settings, registry: ToolRegistry) -> APIRouter:
+def build_chat_router(
+    settings: Settings, registry: ToolRegistry, catalog: ModelCatalog | None = None
+) -> APIRouter:
     local_router = APIRouter()
+    catalog = catalog or ModelCatalog(settings)
 
-    @local_router.post("/v1/chat")
-    async def chat(request: Request, body: ChatRequest) -> EventSourceResponse:
+    @local_router.post("/v1/chat", response_model=None)
+    async def chat(request: Request, body: ChatRequest) -> EventSourceResponse | JSONResponse:
         request_id = new_request_id()
+
+        try:
+            model_info = await resolve_model(catalog, model_id=body.model, provider=body.endpoint)
+        except MeliGPTError as exc:
+            return JSONResponse(status_code=400, content=exc.to_dict())
 
         async def event_generator():
             try:
@@ -81,6 +91,7 @@ def build_chat_router(settings: Settings, registry: ToolRegistry) -> APIRouter:
                     discovery_enabled=body.discovery_enabled,
                     interactive=False,
                     prompt_for_har=None,
+                    model_info=model_info,
                 ):
                     if await request.is_disconnected():
                         log_with_fields(
@@ -103,6 +114,13 @@ def build_chat_router(settings: Settings, registry: ToolRegistry) -> APIRouter:
                                     "success": event.success,
                                     "message": event.message,
                                 }
+                            ),
+                        }
+                    elif isinstance(event, GeneratedImage):
+                        yield {
+                            "event": "generated_image",
+                            "data": json.dumps(
+                                {"virtual_path": event.virtual_path, "url": event.url}
                             ),
                         }
                     elif isinstance(event, ChatFinished):

@@ -5,6 +5,12 @@ filesystem), ``fsync`` e ``os.replace`` relativo a descritores
 (``dir_fd``), o que troca a *entrada de diretório* atomicamente — nunca
 segue o alvo caso ``file_path`` já aponte para um symlink. Preserva
 exatamente o conteúdo recebido, incluindo trailing newlines.
+
+Cria diretórios intermediários ausentes automaticamente (como
+``mkdir -p``, sempre dentro da raiz sandbox) — o modelo remoto costuma
+mandar um caminho "de host" (ex.: `/tmp/tmp.xxxx/index.js`, refletindo o
+cwd que o cliente relatou a ele) que, na nossa raiz virtual, vira
+subpastas que ainda não existem.
 """
 
 from __future__ import annotations
@@ -43,7 +49,9 @@ class WriteFileTool:
 
         root = settings.resolved_files_dir()
 
-        with resolve_secure(root, virtual, allow_missing_final=True) as target:
+        with resolve_secure(
+            root, virtual, allow_missing_final=True, create_missing_dirs=True
+        ) as target:
             if target.name == "":
                 raise ToolValidationError("não é possível gravar na raiz de arquivos")
             if target.exists and target.is_dir:

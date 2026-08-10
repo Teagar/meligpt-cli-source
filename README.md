@@ -18,9 +18,10 @@ quando o modelo pede.
   orquestração via `POST /v1/chat` (Server-Sent Events), para quem prefere
   integrar por HTTP em vez de invocar o binário.
 - **Ferramentas locais**: `ls`, `read_file`, `write_file`, `edit_file`,
-  `glob`, `grep`, `write_todos`, `WebSearch` (todas implementadas de
-  verdade) + 3 ferramentas "stub" (`parallel`, `task`, `ImageGeneration`)
-  que respondem `tool_not_implemented` de forma explícita — ver
+  `glob`, `grep`, `write_todos`, `WebSearch`, `bash` (todas implementadas
+  de verdade — `bash` vem **desligada por padrão** por segurança) + 3
+  ferramentas "stub" (`parallel`, `task`, `ImageGeneration`) que
+  respondem `tool_not_implemented` de forma explícita — ver
   [`docs/tools.md`](docs/tools.md).
 
 ## Requisitos
@@ -133,6 +134,85 @@ ambos os caminhos passam pela mesma orquestração
 modelo remoto é espelhada da mesma forma independente de como você está
 conversando com ele.
 
+### `/loop` e `CronCreate` (OpenClaude)
+
+Se você usa o OpenClaude apontado para este servidor, `/loop` e
+`CronCreate` funcionam **sem nenhuma implementação adicional aqui**: é um
+agendador 100% client-side do próprio OpenClaude/Claude Code, que roda
+dentro do processo dele e reinjeta prompts na sessão — não fala com
+nenhum backend externo. Cada disparo automático chega neste servidor como
+uma chamada HTTP normal em `/v1/chat/completions`, indistinguível de uma
+mensagem digitada à mão, e a memória multi-turno (transcrição inteira
+reenviada a cada turno) já cobre isso.
+
+## Uso local com bash + filesystem real liberados
+
+Se você quer que o modelo (via OpenClaude) execute comandos e crie/edite
+arquivos livremente na sua máquina — não num sandbox — use o preset
+`.env.full-access.example`:
+
+```bash
+cp .env.full-access.example .env
+meligpt import-har seu-arquivo.har   # uma vez, para autenticar
+meligpt serve
+```
+
+No OpenClaude, aponte o provider (base URL) para `http://localhost:8080/v1`
+e rode com um modo de permissão que não interrompe a cada ação:
+
+```bash
+openclaude --permission-mode acceptEdits
+# ou, sem nenhum prompt de confirmação (só em máquina que você controla):
+openclaude --dangerously-skip-permissions
+```
+
+Depois de subir o servidor, rode `./scripts/verify_full_access.sh` para
+conferir em 2 minutos se a config de acesso total (bash + filesystem real
++ catálogo de modelos) está correta antes de testar pelo OpenClaude.
+
+⚠️ Isso dá ao modelo remoto acesso de shell e escrita irrestrita no seu
+filesystem real. Só faz sentido em máquina pessoal/dev — nunca num
+servidor compartilhado ou exposto à internet.
+
+## Catálogo de modelos multi-provedor
+
+O MeliGPT expõe vários "provedores" via rotas HTTP distintas
+(`/api/ask/openAI`, `/api/ask/google`, `/api/ask/nova`,
+`/api/ask/generic` para o restante), e cada requisição também carrega um
+campo `"endpoint"` no corpo — que **nem sempre coincide com a rota**: o
+Claude, por exemplo, usa a rota `/api/ask/generic` mas manda
+`"endpoint": "bedrock"` no payload. O catálogo (`src/meligpt/catalog.py`)
+guarda os dois separadamente (`route` vs `payload_endpoint`) para lidar
+com isso.
+
+```bash
+meligpt models                    # lista todo o catálogo
+meligpt models --provider google  # filtra por provedor
+meligpt providers                 # lista as rotas conhecidas
+
+meligpt chat --model gemini-3.6-flash "explique este código"
+meligpt chat --endpoint anthropic "explique este código"
+```
+
+Rotas HTTP via API:
+
+- `GET /v1/models` (aceita `?provider=` e `?endpoint=`)
+- `GET /v1/models/{id}`
+- `GET /v1/providers`
+- `POST /v1/chat` aceita `"model"` e/ou `"endpoint"` no corpo
+- `POST /v1/chat/completions` (compatível com OpenAI) troca de
+  modelo/rota quando `"model"` bate com um id real do catálogo; caso
+  contrário preserva o comportamento padrão (`Settings.model` /
+  `resolved_endpoint()`) — então clientes como o OpenClaude, que sempre
+  mandam um rótulo genérico (`"meligpt"`), continuam funcionando sem
+  mudança nenhuma. Modelos do tipo `image`/`video` são rejeitados com
+  `400 model_type_not_supported` neste endpoint.
+
+Sem `MELIGPT_MODELS_URL` configurado (não há evidência de HAR para uma
+URL de catálogo remoto real — fica puramente opcional), o servidor usa um
+catálogo local fixo com os 8 modelos confirmados manualmente. Ver
+`.env.example` para `MELIGPT_MODELS_URL` / `MELIGPT_MODELS_CACHE_SECONDS`.
+
 **Memória de conversa:** o MeliGPT não expõe `conversationId` persistente
 para este adaptador, mas o OpenClaude (como qualquer cliente
 OpenAI-compatible padrão) reenvia o histórico completo em `messages` a
@@ -164,9 +244,75 @@ busca web, toggle experimental de `browsing` nativo).
 | `/data/config` | `secrets.env` |
 | `/data/files`  | raiz sandbox das ferramentas `ls`/`read_file`/`write_file` |
 
+## Fazendo `write_file`/`read_file`/`edit_file` operarem na sua pasta real (OpenClaude local)
+
+Por padrão, as ferramentas de arquivo escrevem num sandbox isolado
+(`/data/files` no Docker, `~/.config/meligpt-cli/files` fora dele) — **não**
+na pasta onde você está rodando o OpenClaude, mesmo que os dois processos
+estejam na mesma máquina. Isso é proposital (o mesmo `meligpt serve` pode,
+em tese, atender qualquer cliente, não só um OpenClaude local).
+
+Se você roda `meligpt serve` no **mesmo dispositivo** que o OpenClaude e
+quer que as ferramentas leiam/escrevam de verdade na pasta onde você está
+(`pwd`), ligue o modo passagem direta:
+
+```bash
+export MELIGPT_FILES_DIR=/
+export MELIGPT_ALLOW_FULL_FILESYSTEM_ACCESS=true
+meligpt serve
+```
+
+Com isso, um caminho como `/tmp/tmp.v2Ugw0ltmU/index.js` (o que o
+OpenClaude relata como seu cwd) passa a apontar para o caminho real
+`/tmp/tmp.v2Ugw0ltmU/index.js` no disco, não mais para dentro de um
+sandbox isolado.
+
+> ⚠️ Isso dá ao modelo remoto acesso de leitura/escrita a **todo o
+> filesystem visível a este processo** — não só à pasta do seu projeto.
+> Rode com o usuário mais restrito possível, evite rodar como root, e
+> desligue quando não estiver usando ativamente. Sem
+> `MELIGPT_ALLOW_FULL_FILESYSTEM_ACCESS=true`, o servidor recusa iniciar
+> com `MELIGPT_FILES_DIR=/` — essa segunda variável existe justamente
+> para você não ativar isso sem querer.
+
 ## Ferramentas disponíveis
 
 Ver [`docs/tools.md`](docs/tools.md) para o schema completo de cada uma.
+
+> ⚠️ **`bash` dá execução de comando real** e vem **desligada por
+> padrão**. Só ative com `MELIGPT_ENABLE_BASH_TOOL=true` rodando dentro
+> de um container isolado (como o próprio `Dockerfile` deste projeto já
+> configura — usuário não-root, filesystem read-only fora de `/data`).
+> Fora de um container assim, ligar essa ferramenta equivale a dar
+> acesso de shell ao host onde o `meligpt serve` está rodando.
+
+## Geração de imagens
+
+Quando o modelo remoto gera uma imagem, o MeliGPT serve o arquivo via
+`GET /api/media/{userId}/{filename}` (rota confirmada por HAR). O
+servidor detecta esse link no texto da resposta, baixa a imagem
+autenticada e salva localmente em `MELIGPT_CONFIG_DIR/generated-images/`
+(configurável via `MELIGPT_MEDIA_DIR`) — sem precisar de nenhuma
+ferramenta adicional do lado do modelo.
+
+> Esse diretório é **sempre** independente de `MELIGPT_FILES_DIR`,
+> mesmo em modo de acesso total (`MELIGPT_FILES_DIR=/`) — gravar sob a
+> raiz real do filesystem exigiria permissão de root e falharia (bug
+> real encontrado e corrigido em teste end-to-end; ver
+> `docs/migration.md` para o changelog).
+
+- **CLI**: aparece como `Imagem gerada salva em: <caminho absoluto>`.
+- **`POST /v1/chat`** (SSE): evento `generated_image` com `virtual_path`
+  e `url`.
+- **`POST /v1/chat/completions`** (compatível OpenAI, streaming e
+  não-streaming): a imagem aparece embutida no texto da resposta como
+  `![imagem gerada](<caminho absoluto>)`.
+
+Falha ao baixar uma imagem específica vira um aviso — nunca derruba o
+resto da resposta. Não há suporte (ainda) para reenviar uma imagem
+gerada de volta como referência num próximo turno, nem para editar uma
+imagem existente — isso exigiria confirmar o schema de tool_call que o
+MeliGPT usa para essas ações, que não temos evidência de HAR.
 
 ## Testes
 
@@ -200,7 +346,11 @@ docker compose up -d   # sobe o servidor HTTP/SSE
 | `upstream_forbidden` / 403 | sessão/conta sem permissão, VPN, ou bloqueio de rede | confirme que a conta usada no navegador tem acesso |
 | `path_traversal` / `symlink_not_allowed` | a ferramenta tentou sair da raiz `/data/files` | comportamento esperado — é a sandbox funcionando |
 | Ferramenta retorna `tool_not_implemented` | `parallel`/`task`/`ImageGeneration` (sem provedor real) | ver `docs/tools.md` |
-| Ferramenta espelhada falha com `tool_validation_error` (`file_path`/`content` inválido) | o modelo remoto mandou os argumentos num formato/nome de chave que ninguém tinha visto ainda | a própria mensagem de erro mostra `args brutos: {...}` — cole isso ao reportar o problema; as ferramentas de arquivo já aceitam vários aliases (`file_path`, `path`, `filepath`, `file`, `filename`, `target_path`, `target` / `content`, `text`, `file_content`, `data`, `body`) antes de desistir |
+| Ferramenta espelhada falha com `tool_validation_error` (`file_path`/`content` inválido) | **Causa raiz identificada e corrigida** (confirmada via HAR real): o MeliGPT manda `on_run_step_completed` duas vezes para a mesma tool call, a segunda sem `args` — isso apagava os argumentos reais antes de chegar na ferramenta. Se ainda acontecer, é um formato de chave novo que ninguém tinha visto | a própria mensagem de erro mostra `args brutos: {...}` — cole isso ao reportar; as ferramentas de arquivo já aceitam vários aliases (`file_path`, `path`, `filepath`, `file`, `filename`, `target_path`, `target` / `content`, `text`, `file_content`, `data`, `body`) antes de desistir |
+| `bash` retorna `tool_disabled` | ferramenta desligada por padrão (execução real de comando) | ative com `MELIGPT_ENABLE_BASH_TOOL=true` **só** se estiver rodando isolado em Docker — ver `docs/tools.md` |
+| `write_file` falhava com "caminho local não encontrado" para caminhos tipo `/tmp/tmp.xxxx/arquivo.js` | **Corrigido**: o modelo remoto manda um caminho "de host" (refletindo o cwd que o cliente relatou a ele); `write_file` agora cria as subpastas automaticamente dentro da raiz sandbox, como `mkdir -p` | nenhuma ação necessária |
+| Arquivo criado com sucesso (`[write_file] gravado localmente: ...`), mas não aparece na pasta onde você está rodando o OpenClaude | por padrão as ferramentas escrevem num sandbox isolado, não na pasta real do host, mesmo na mesma máquina | ligue o modo passagem direta — ver seção "Fazendo write_file/read_file/edit_file operarem na sua pasta real" acima |
+| `unsafe_configuration` ao iniciar (`MELIGPT_FILES_DIR=/`) | confirmação de segurança exigida para o modo passagem direta | defina também `MELIGPT_ALLOW_FULL_FILESYSTEM_ACCESS=true`, sabendo que isso dá acesso ao filesystem inteiro visível ao processo |
 
 ## Migração a partir da versão Bash
 

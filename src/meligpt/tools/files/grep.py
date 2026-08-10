@@ -12,10 +12,10 @@ from typing import Any
 
 from meligpt.config import Settings
 from meligpt.exceptions import NotADirectoryToolError, ToolValidationError
+from meligpt.filesystem.exclusions import DEFAULT_EXCLUDED_DIRS as _EXCLUDED_DIRS
 from meligpt.filesystem.security import resolve_secure
 from meligpt.tools.files.glob import _walk_files
 
-_EXCLUDED_DIRS = {".git", "node_modules", "__pycache__", ".venv"}
 _SNIFF_BYTES = 8192
 
 

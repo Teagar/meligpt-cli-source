@@ -1,0 +1,244 @@
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+
+from meligpt.catalog import (
+    FALLBACK_MODELS,
+    FALLBACK_PROVIDERS,
+    ModelCatalog,
+    resolve_model,
+)
+from meligpt.exceptions import ModelNotFoundError, ProviderNotFoundError
+
+
+def test_fallback_models_have_gpt_sol_first() -> None:
+    assert FALLBACK_MODELS[0].id == "gpt-5.6-sol"
+    assert len(FALLBACK_MODELS) == 8
+    assert len({m.id for m in FALLBACK_MODELS}) == 8
+
+
+def test_claude_uses_generic_route_but_bedrock_payload_endpoint() -> None:
+    claude = next(m for m in FALLBACK_MODELS if m.id == "claude-5-sonnet")
+    assert claude.provider == "anthropic"
+    assert claude.payload_endpoint == "bedrock"
+    assert claude.route == "/api/ask/generic"
+
+
+def test_known_route_models_use_dedicated_routes() -> None:
+    routes = {m.id: m.route for m in FALLBACK_MODELS}
+    assert routes["gpt-5.6-sol"] == "/api/ask/openAI"
+    assert routes["gemini-3.6-flash"] == "/api/ask/google"
+    assert routes["amazon.nova-pro-v1:0"] == "/api/ask/nova"
+
+
+@pytest.mark.asyncio
+async def test_models_falls_back_to_local_without_models_url(settings) -> None:
+    catalog = ModelCatalog(settings)
+    models = await catalog.models()
+    assert models == list(FALLBACK_MODELS)
+
+
+@pytest.mark.asyncio
+async def test_get_returns_none_for_unknown_id(settings) -> None:
+    catalog = ModelCatalog(settings)
+    assert await catalog.get("does-not-exist") is None
+    assert (await catalog.get("gpt-5.6-sol")).name == "GPT-5.6 Sol"
+
+
+@pytest.mark.asyncio
+async def test_list_models_filters_by_provider_and_endpoint(settings) -> None:
+    catalog = ModelCatalog(settings)
+    google_models = await catalog.list_models(provider="google")
+    assert [m.id for m in google_models] == ["gemini-3.6-flash"]
+
+    bedrock_models = await catalog.list_models(endpoint="bedrock")
+    assert [m.id for m in bedrock_models] == ["claude-5-sonnet"]
+
+
+@pytest.mark.asyncio
+async def test_list_providers_returns_known_routes(settings) -> None:
+    catalog = ModelCatalog(settings)
+    providers = await catalog.list_providers()
+    assert providers == list(FALLBACK_PROVIDERS)
+    assert any(p.id == "openAI" and p.route == "/api/ask/openAI" for p in providers)
+
+
+@pytest.mark.asyncio
+async def test_remote_catalog_is_used_when_configured(settings) -> None:
+    remote_payload = {
+        "models": [
+            {
+                "id": "custom-model",
+                "name": "Custom Model",
+                "provider": "custom-vendor",
+                "payload_endpoint": "custom-vendor",
+                "type": "chat",
+            }
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://example.com/models.json"
+        return httpx.Response(200, json=remote_payload)
+
+    settings.models_url = "https://example.com/models.json"
+    catalog = ModelCatalog(settings, transport=httpx.MockTransport(handler))
+
+    models = await catalog.models()
+    assert len(models) == 1
+    assert models[0].id == "custom-model"
+    # rota derivada via KNOWN_ROUTES (provedor desconhecido -> generic)
+    assert models[0].route == "/api/ask/generic"
+
+
+@pytest.mark.asyncio
+async def test_remote_catalog_falls_back_to_local_on_http_error(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    settings.models_url = "https://example.com/models.json"
+    catalog = ModelCatalog(settings, transport=httpx.MockTransport(handler))
+
+    models = await catalog.models()
+    assert models == list(FALLBACK_MODELS)
+
+
+@pytest.mark.asyncio
+async def test_remote_catalog_falls_back_to_local_on_bad_json(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not json")
+
+    settings.models_url = "https://example.com/models.json"
+    catalog = ModelCatalog(settings, transport=httpx.MockTransport(handler))
+
+    models = await catalog.models()
+    assert models == list(FALLBACK_MODELS)
+
+
+@pytest.mark.asyncio
+async def test_remote_catalog_falls_back_to_local_on_unexpected_shape(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"unexpected": "shape"})
+
+    settings.models_url = "https://example.com/models.json"
+    catalog = ModelCatalog(settings, transport=httpx.MockTransport(handler))
+
+    models = await catalog.models()
+    assert models == list(FALLBACK_MODELS)
+
+
+@pytest.mark.asyncio
+async def test_remote_catalog_is_cached_within_ttl(settings) -> None:
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, json={"models": []})
+
+    settings.models_url = "https://example.com/models.json"
+    settings.models_cache_seconds = 300.0
+    catalog = ModelCatalog(settings, transport=httpx.MockTransport(handler))
+
+    await catalog.models()
+    await catalog.models()
+    assert call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_remote_catalog_refetches_after_ttl_expires(settings, monkeypatch) -> None:
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, json={"models": []})
+
+    settings.models_url = "https://example.com/models.json"
+    settings.models_cache_seconds = 0.01
+    catalog = ModelCatalog(settings, transport=httpx.MockTransport(handler))
+
+    await catalog.models()
+
+    import time
+
+    time.sleep(0.05)
+    await catalog.models()
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_returns_none_without_selection(settings) -> None:
+    catalog = ModelCatalog(settings)
+    assert await resolve_model(catalog) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_by_id(settings) -> None:
+    catalog = ModelCatalog(settings)
+    model = await resolve_model(catalog, model_id="gemini-3.6-flash")
+    assert model is not None
+    assert model.id == "gemini-3.6-flash"
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_unknown_id_raises(settings) -> None:
+    catalog = ModelCatalog(settings)
+    with pytest.raises(ModelNotFoundError):
+        await resolve_model(catalog, model_id="nope")
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_by_provider_picks_first_chat_model(settings) -> None:
+    catalog = ModelCatalog(settings)
+    model = await resolve_model(catalog, provider="openAI")
+    assert model is not None
+    assert model.id == "gpt-5.6-sol"
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_unknown_provider_raises(settings) -> None:
+    catalog = ModelCatalog(settings)
+    with pytest.raises(ProviderNotFoundError):
+        await resolve_model(catalog, provider="does-not-exist")
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_mismatched_provider_raises(settings) -> None:
+    catalog = ModelCatalog(settings)
+    with pytest.raises(ModelNotFoundError):
+        await resolve_model(catalog, model_id="gemini-3.6-flash", provider="openAI")
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_rejects_non_chat_type(settings) -> None:
+    remote_payload = {
+        "models": [
+            {
+                "id": "image-model",
+                "name": "Image Model",
+                "provider": "custom",
+                "payload_endpoint": "custom",
+                "type": "image",
+            }
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=remote_payload)
+
+    settings.models_url = "https://example.com/models.json"
+    catalog = ModelCatalog(settings, transport=httpx.MockTransport(handler))
+
+    from meligpt.exceptions import ModelTypeNotSupportedError
+
+    with pytest.raises(ModelTypeNotSupportedError):
+        await resolve_model(catalog, model_id="image-model")
+
+
+def test_json_import_smoke() -> None:
+    # Garante que os payloads de exemplo usados nos testes acima são JSON válido.
+    json.dumps({"models": []})

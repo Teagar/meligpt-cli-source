@@ -63,11 +63,13 @@ def build_default_registry() -> ToolRegistry:
     """Constrói o registro com todas as ferramentas conhecidas.
 
     `ls`, `read_file`, `write_file` (Fase A, com contraparte no Bash
-    original) e `edit_file`, `glob`, `grep`, `write_todos`, `WebSearch`
-    (implementadas de verdade — ver ``docs/tools.md``) convivem com
-    `parallel`, `task`, `ImageGeneration`, que continuam stubs por
+    original) e `edit_file`, `glob`, `grep`, `write_todos`, `WebSearch`,
+    `bash` (implementadas de verdade — ver ``docs/tools.md``) convivem
+    com `parallel`, `task`, `ImageGeneration`, que continuam stubs por
     dependerem de orquestração de subagentes ou provedor externo não
-    configurado.
+    configurado. `bash` é a única ferramenta desligada por padrão via
+    configuração (`MELIGPT_ENABLE_BASH_TOOL`), não por falta de
+    implementação.
     """
 
     from meligpt.tools.files.edit_file import EditFileTool
@@ -81,6 +83,7 @@ def build_default_registry() -> ToolRegistry:
     from meligpt.tools.stubs.image_generation import ImageGenerationStub
     from meligpt.tools.stubs.parallel import ParallelStub
     from meligpt.tools.stubs.task import TaskStub
+    from meligpt.tools.system.bash import BashTool
 
     registry = ToolRegistry()
     for tool in (
@@ -92,6 +95,7 @@ def build_default_registry() -> ToolRegistry:
         GrepTool(),
         WriteTodosTool(),
         WebSearchTool(),
+        BashTool(),
         ParallelStub(),
         TaskStub(),
         ImageGenerationStub(),
