@@ -49,7 +49,7 @@ from starlette.responses import JSONResponse
 from meligpt.catalog import ModelCatalog
 from meligpt.chat.service import (
     ChatFinished,
-    GeneratedImage,
+    GeneratedMedia,
     MirroredToolResult,
     TextChunk,
     WarningMessage,
@@ -71,6 +71,10 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
+    media_dir: str | None = None
+    """Extensão fora do padrão OpenAI: onde salvar imagens/vídeos gerados
+    neste turno. Clientes que não conhecem o campo simplesmente não o
+    mandam — sem isso, usa o destino padrão."""
 
 
 def _build_transcript_prompt(
@@ -281,13 +285,15 @@ def build_openai_router(
                     discovery_enabled=False,
                     auto_files=True,
                     model_info=model_info,
+                    media_dir=body.media_dir,
                 ):
                     if isinstance(event, TextChunk):
                         parts.append(event.text)
                     elif isinstance(event, MirroredToolResult):
                         parts.append(f"\n[{event.name}] {event.message}\n")
-                    elif isinstance(event, GeneratedImage):
-                        parts.append(f"\n![imagem gerada]({event.virtual_path})\n")
+                    elif isinstance(event, GeneratedMedia):
+                        label = "vídeo gerado" if event.media_type == "video" else "imagem gerada"
+                        parts.append(f"\n![{label}]({event.virtual_path})\n")
                     elif isinstance(event, WarningMessage):
                         parts.append(f"\n[aviso] {event.message}\n")
             except MeliGPTError as exc:
@@ -325,13 +331,15 @@ def build_openai_router(
                     discovery_enabled=False,
                     auto_files=True,
                     model_info=model_info,
+                    media_dir=body.media_dir,
                 ):
                     if isinstance(event, TextChunk):
                         text = event.text
                     elif isinstance(event, MirroredToolResult):
                         text = f"\n[{event.name}] {event.message}\n"
-                    elif isinstance(event, GeneratedImage):
-                        text = f"\n![imagem gerada]({event.virtual_path})\n"
+                    elif isinstance(event, GeneratedMedia):
+                        label = "vídeo gerado" if event.media_type == "video" else "imagem gerada"
+                        text = f"\n![{label}]({event.virtual_path})\n"
                     elif isinstance(event, WarningMessage):
                         text = f"\n[aviso] {event.message}\n"
                     elif isinstance(event, ChatFinished):

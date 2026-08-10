@@ -49,6 +49,14 @@ removidos quando você confirmar que a versão Python atende seu uso diário.
 |---|---|---|
 | 2026-08-10 | Com `MELIGPT_FILES_DIR=/` (modo de acesso total ao filesystem, usado para deixar o OpenClaude editar/criar arquivos reais), baixar uma imagem gerada falhava com `falha ao salvar imagem gerada: não foi possível criar diretório intermediário: generated-images/...` — a pasta de mídia tentava se criar sob a raiz real do filesystem (`/generated-images`), que exige permissão de root. Encontrado via teste end-to-end real com `openclaude -p`. | `Settings.resolved_media_dir()` (nova, default `config_dir/generated-images`) é agora sempre independente de `files_dir` — nunca tenta gravar sob a raiz do filesystem. Ver `tests/integration/test_chat_service.py::test_run_chat_downloads_generated_image_with_full_filesystem_access` (regressão exata do bug) e `tests/unit/test_full_filesystem_guard.py::test_media_dir_independent_of_root_files_dir`. |
 
+## Recursos adicionados depois do lançamento inicial
+
+| Data | O quê | Onde |
+|---|---|---|
+| 2026-08-10 | `GeneratedImage` renomeado para `GeneratedMedia` (campo `media_type`: `image`/`video`/`other`, inferido pela extensão) — o mecanismo de download já era agnóstico de extensão, só faltava deixar de nomear tudo como "imagem". | `chat/service.py`, `media.py` |
+| 2026-08-10 | `media_dir` — escolher onde salvar mídia gerada num turno específico (`--media-dir` na CLI, campo `media_dir` em `/v1/chat` e `/v1/chat/completions`). Sem isso, usa o destino padrão (`Settings.resolved_media_dir()`). | `chat/service.py:run_chat`, `cli.py`, `api/routes.py`, `api/openai_compat.py` |
+| 2026-08-10 | 4 modelos de vídeo adicionados ao catálogo local (`sora-2`, `veo-3.1-generate`, `veo-3.1-fast-generate`, `happyhorse-1.0`) — nomes de exibição confirmados pelo usuário, **ids inferidos** (não confirmados por HAR). `resolve_model()` ganhou `require_type=None` para `meligpt chat`/`POST /v1/chat` aceitarem modelos de vídeo/imagem — `POST /v1/chat/completions` continua restrito a `chat`. | `catalog.py` |
+
 ## Plano de rollback
 
 1. Pare o serviço/processo Python.

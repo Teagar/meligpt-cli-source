@@ -118,12 +118,12 @@ def _model(
     )
 
 
-#: Os 8 modelos confirmados manualmente (ver resumo do checkpoint anterior).
-#: ``gpt-5.6-sol`` fica primeiro de propósito: é o default de
+#: Os 8 modelos de CHAT confirmados manualmente (ver resumo do checkpoint
+#: anterior). ``gpt-5.6-sol`` fica primeiro de propósito: é o default de
 #: ``Settings.model`` e o comportamento pré-catálogo de ``GET /v1/models``
 #: (usado por integrações existentes, ex. OpenClaude) já esperava vê-lo
 #: como primeiro item da lista.
-FALLBACK_MODELS: tuple[ModelInfo, ...] = (
+_CHAT_MODELS: tuple[ModelInfo, ...] = (
     _model("gpt-5.6-sol", "GPT-5.6 Sol", "openAI", "openAI"),
     _model("gpt-5.6-luna", "GPT-5.6 Luna", "openAI", "openAI"),
     _model("claude-5-sonnet", "Claude 5 Sonnet", "anthropic", "bedrock"),
@@ -138,6 +138,25 @@ FALLBACK_MODELS: tuple[ModelInfo, ...] = (
         "meta",
     ),
 )
+
+#: Modelos de VÍDEO — nomes de exibição confirmados pelo usuário (visto no
+#: seletor de modelo do MeliGPT em 2026-08-10), mas os **ids** abaixo são
+#: INFERIDOS (slug do nome de exibição, seguindo o padrão dos ids
+#: confirmados acima) — não vimos o payload real de uma requisição com
+#: esses modelos, então não sabemos com certeza o valor exato que vai no
+#: campo ``"model"`` do JSON. Provider e rota (via `KNOWN_ROUTES`) seguem
+#: o mesmo padrão dos modelos de chat do mesmo provedor, esses sim
+#: confirmados. Se algum desses ids não bater com o que o MeliGPT espera
+#: (erro do servidor ao usar `--model`), corrija a string aqui — é o único
+#: lugar que precisa mudar.
+_VIDEO_MODELS: tuple[ModelInfo, ...] = (
+    _model("sora-2", "Sora 2", "openAI", "openAI", type="video"),
+    _model("veo-3.1-generate", "Veo 3.1 Generate", "google", "google", type="video"),
+    _model("veo-3.1-fast-generate", "Veo 3.1 Fast Generate", "google", "google", type="video"),
+    _model("happyhorse-1.0", "HappyHorse 1.0", "alibaba", "alibaba", type="video"),
+)
+
+FALLBACK_MODELS: tuple[ModelInfo, ...] = _CHAT_MODELS + _VIDEO_MODELS
 
 FALLBACK_PROVIDERS: tuple[ProviderInfo, ...] = tuple(
     ProviderInfo(id=provider, route=route) for provider, route in KNOWN_ROUTES.items()
@@ -264,13 +283,21 @@ async def resolve_model(
     *,
     model_id: str | None = None,
     provider: str | None = None,
-    require_type: ModelType = "chat",
+    require_type: ModelType | None = "chat",
 ) -> ModelInfo | None:
     """Resolve uma seleção de modelo/provedor pedida pelo usuário (CLI ou API).
 
     Retorna ``None`` quando nem ``model_id`` nem ``provider`` foram
     informados — sinal para o chamador usar o comportamento padrão
     (``Settings.model`` / ``Settings.resolved_endpoint()``).
+
+    ``require_type=None`` aceita qualquer tipo de modelo (chat, image ou
+    video) sem restrição — usado pelo endpoint de chat genérico
+    (``meligpt chat`` / ``POST /v1/chat``), que é capaz de lidar com
+    qualquer resposta (texto ou mídia baixada via
+    :mod:`meligpt.media`). O default ``"chat"`` é o mais seguro para
+    contextos que assumem uma conversa de texto (ex.:
+    ``/v1/chat/completions``, usado por assistentes de código).
 
     Levanta :class:`ModelNotFoundError`, :class:`ProviderNotFoundError` ou
     :class:`ModelTypeNotSupportedError` conforme o caso.
@@ -292,10 +319,13 @@ async def resolve_model(
         candidates = await catalog.list_models(provider=provider)
         if not candidates:
             raise ProviderNotFoundError(f"provedor desconhecido: {provider}")
-        chat_candidates = [m for m in candidates if m.type == require_type]
-        model = chat_candidates[0] if chat_candidates else candidates[0]
+        if require_type is not None:
+            preferred = [m for m in candidates if m.type == require_type]
+            model = preferred[0] if preferred else candidates[0]
+        else:
+            model = candidates[0]
 
-    if model.type != require_type:
+    if require_type is not None and model.type != require_type:
         raise ModelTypeNotSupportedError(
             f"modelo {model.id!r} é do tipo {model.type!r}, "
             f"não suportado neste endpoint (esperado: {require_type!r})"

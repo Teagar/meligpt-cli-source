@@ -286,33 +286,73 @@ Ver [`docs/tools.md`](docs/tools.md) para o schema completo de cada uma.
 > Fora de um container assim, ligar essa ferramenta equivale a dar
 > acesso de shell ao host onde o `meligpt serve` está rodando.
 
-## Geração de imagens
+## Geração de imagens e vídeos
 
-Quando o modelo remoto gera uma imagem, o MeliGPT serve o arquivo via
-`GET /api/media/{userId}/{filename}` (rota confirmada por HAR). O
-servidor detecta esse link no texto da resposta, baixa a imagem
-autenticada e salva localmente em `MELIGPT_CONFIG_DIR/generated-images/`
-(configurável via `MELIGPT_MEDIA_DIR`) — sem precisar de nenhuma
-ferramenta adicional do lado do modelo.
+Quando o modelo remoto gera uma imagem ou vídeo, o MeliGPT serve o
+arquivo via `GET /api/media/{userId}/{filename}` (rota confirmada por
+HAR — vista com imagens, mas independente de extensão, então vídeo
+funciona pelo mesmo mecanismo). O servidor detecta esse link no texto da
+resposta, baixa o arquivo autenticado e salva localmente — sem precisar
+de nenhuma ferramenta adicional do lado do modelo.
 
-> Esse diretório é **sempre** independente de `MELIGPT_FILES_DIR`,
-> mesmo em modo de acesso total (`MELIGPT_FILES_DIR=/`) — gravar sob a
-> raiz real do filesystem exigiria permissão de root e falharia (bug
-> real encontrado e corrigido em teste end-to-end; ver
-> `docs/migration.md` para o changelog).
+**Onde é salvo:**
+- Por padrão: `MELIGPT_CONFIG_DIR/generated-images/` (configurável via
+  `MELIGPT_MEDIA_DIR`) — **sempre** independente de `MELIGPT_FILES_DIR`,
+  mesmo em modo de acesso total (`MELIGPT_FILES_DIR=/`), porque gravar
+  sob a raiz real do filesystem exigiria permissão de root e falharia
+  (bug real encontrado e corrigido em teste end-to-end; ver
+  `docs/migration.md` para o changelog).
+- Pra escolher onde salvar num turno específico, use `--media-dir`
+  (CLI) ou o campo `"media_dir"` (`/v1/chat` e `/v1/chat/completions`)
+  — caminho relativo à raiz de arquivos configurada, ou absoluto em modo
+  de acesso total (mesma semântica de `write_file`):
+  ```bash
+  meligpt chat --media-dir minhas-imagens "gere um gato"
+  meligpt chat --media-dir /home/voce/Imagens "gere um gato"
+  ```
 
-- **CLI**: aparece como `Imagem gerada salva em: <caminho absoluto>`.
-- **`POST /v1/chat`** (SSE): evento `generated_image` com `virtual_path`
-  e `url`.
+**Como aparece:**
+- **CLI**: `Imagem gerada salva em: <caminho>` ou `Vídeo gerado salvo em: <caminho>`.
+- **`POST /v1/chat`** (SSE): evento `generated_media` com `virtual_path`,
+  `url` e `media_type` (`"image"`/`"video"`/`"other"`).
 - **`POST /v1/chat/completions`** (compatível OpenAI, streaming e
-  não-streaming): a imagem aparece embutida no texto da resposta como
-  `![imagem gerada](<caminho absoluto>)`.
+  não-streaming): aparece embutido no texto da resposta como
+  `![imagem gerada](<caminho>)` ou `![vídeo gerado](<caminho>)`.
 
-Falha ao baixar uma imagem específica vira um aviso — nunca derruba o
-resto da resposta. Não há suporte (ainda) para reenviar uma imagem
-gerada de volta como referência num próximo turno, nem para editar uma
-imagem existente — isso exigiria confirmar o schema de tool_call que o
-MeliGPT usa para essas ações, que não temos evidência de HAR.
+Falha ao baixar um arquivo específico vira um aviso — nunca derruba o
+resto da resposta. Não há suporte (ainda) para reenviar uma imagem/vídeo
+gerado de volta como referência num próximo turno, nem para editar mídia
+existente — isso exigiria confirmar o schema de tool_call que o MeliGPT
+usa para essas ações, que não temos evidência de HAR.
+
+### Modelos de vídeo
+
+O catálogo (`meligpt models`) inclui 4 modelos de vídeo, cujos **nomes
+de exibição** foram confirmados pelo usuário no seletor do MeliGPT, mas
+cujos **ids técnicos abaixo são inferidos** (seguindo o padrão dos ids
+de chat já confirmados por HAR) — nunca vimos o payload real de uma
+requisição usando eles:
+
+| Nome de exibição | Id inferido | Provedor |
+|---|---|---|
+| Sora 2 | `sora-2` | openAI |
+| Veo 3.1 Generate | `veo-3.1-generate` | google |
+| Veo 3.1 Fast Generate | `veo-3.1-fast-generate` | google |
+| HappyHorse 1.0 | `happyhorse-1.0` | alibaba |
+
+```bash
+meligpt chat --model sora-2 "gere um vídeo de um gato correndo"
+```
+
+Se o id não bater com o que o MeliGPT espera de verdade (erro do
+servidor), o único lugar que precisa mudar é `_VIDEO_MODELS` em
+`src/meligpt/catalog.py` — troque a string do id pela correta.
+
+Esses modelos só funcionam via `meligpt chat` / `POST /v1/chat` — o
+endpoint compatível com OpenAI (`/v1/chat/completions`, usado pelo
+OpenClaude) rejeita modelos que não sejam de chat com
+`400 model_type_not_supported`, já que não faz sentido selecionar um
+modelo só-de-vídeo para uma conversa de código.
 
 ## Testes
 

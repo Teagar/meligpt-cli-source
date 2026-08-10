@@ -18,6 +18,11 @@ class ChatRequest(BaseModel):
     Ignorado se ``model`` também for informado e apontar para outro
     provedor (nesse caso a requisição é rejeitada)."""
 
+    media_dir: str | None = None
+    """Onde salvar imagens/vídeos gerados neste turno (caminho relativo à
+    raiz de arquivos, ou absoluto em modo de acesso total). Sem isso, usa
+    o destino padrão (``Settings.resolved_media_dir()``)."""
+
 
 class HealthResponse(BaseModel):
     status: str = "ok"

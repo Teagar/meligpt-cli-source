@@ -50,8 +50,8 @@ def test_openai_models_list(client: TestClient) -> None:
 def test_openai_models_list_filters_by_provider(client: TestClient) -> None:
     response = client.get("/v1/models", params={"provider": "google"})
     assert response.status_code == 200
-    ids = [m["id"] for m in response.json()["data"]]
-    assert ids == ["gemini-3.6-flash"]
+    ids = {m["id"] for m in response.json()["data"]}
+    assert ids == {"gemini-3.6-flash", "veo-3.1-generate", "veo-3.1-fast-generate"}
 
 
 def test_openai_models_list_filters_by_endpoint(client: TestClient) -> None:
@@ -104,6 +104,21 @@ def test_openai_chat_completions_rejects_non_chat_model(client: TestClient, monk
     response = client.post(
         "/v1/chat/completions",
         json={"model": "image-gen-1", "messages": [{"role": "user", "content": "oi"}]},
+    )
+    assert response.status_code == 400
+    assert response.json()["code"] == "model_type_not_supported"
+
+
+def test_openai_chat_completions_rejects_real_video_model_from_catalog(
+    client: TestClient,
+) -> None:
+    """Usando um id de vídeo real do catálogo (não um mock) — confirma
+    que `sora-2`/Veo/HappyHorse continuam de fora de
+    `/v1/chat/completions`, mesmo agora que `/v1/chat` os aceita."""
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "sora-2", "messages": [{"role": "user", "content": "gere um vídeo"}]},
     )
     assert response.status_code == 400
     assert response.json()["code"] == "model_type_not_supported"

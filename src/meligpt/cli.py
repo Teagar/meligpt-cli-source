@@ -27,7 +27,7 @@ from meligpt.catalog import ModelCatalog, resolve_model
 from meligpt.chat.service import (
     AmbiguousDiscoveryError,
     ChatFinished,
-    GeneratedImage,
+    GeneratedMedia,
     InfoMessage,
     MirroredToolResult,
     TextChunk,
@@ -103,6 +103,15 @@ def _add_chat_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--endpoint", default=None, help="Provedor lógico do catálogo (ver `meligpt providers`)."
+    )
+    parser.add_argument(
+        "--media-dir",
+        default=None,
+        help=(
+            "Onde salvar imagens/vídeos gerados neste turno (caminho relativo à "
+            "raiz de arquivos configurada, ou absoluto em modo de acesso total). "
+            "Sem isso, usa o destino padrão (MELIGPT_MEDIA_DIR / config_dir/generated-images)."
+        ),
     )
     parser.add_argument("message", nargs="*")
 
@@ -213,7 +222,12 @@ async def _run_chat_command(args: argparse.Namespace, settings: Settings) -> int
     registry = build_default_registry()
     catalog = ModelCatalog(settings)
     try:
-        model_info = await resolve_model(catalog, model_id=args.model, provider=args.endpoint)
+        # require_type=None: `meligpt chat` aceita modelos de vídeo/imagem
+        # também, não só chat — a resposta (texto ou mídia baixada via
+        # meligpt.media) é tratada igual independente do tipo do modelo.
+        model_info = await resolve_model(
+            catalog, model_id=args.model, provider=args.endpoint, require_type=None
+        )
     except MeliGPTError as exc:
         console.error(exc.message)
         return 1
@@ -241,6 +255,7 @@ async def _run_chat_command(args: argparse.Namespace, settings: Settings) -> int
             interactive=sys.stdin.isatty(),
             prompt_for_har=prompt_for_har,
             model_info=model_info,
+            media_dir=args.media_dir,
         ):
             if isinstance(event, TextChunk):
                 console.stream_chunk(event.text)
@@ -251,8 +266,9 @@ async def _run_chat_command(args: argparse.Namespace, settings: Settings) -> int
                 console.warning(event.message)
             elif isinstance(event, MirroredToolResult):
                 console.tool_result(event.name, event.success, event.message)
-            elif isinstance(event, GeneratedImage):
-                console.info(f"Imagem gerada salva em: {event.virtual_path}")
+            elif isinstance(event, GeneratedMedia):
+                label = "Vídeo gerado" if event.media_type == "video" else "Imagem gerada"
+                console.info(f"{label} salvo em: {event.virtual_path}")
             elif isinstance(event, ChatFinished):
                 console.stream_end()
                 if not event.had_text:
