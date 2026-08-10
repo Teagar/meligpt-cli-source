@@ -6,6 +6,7 @@ import pytest
 
 from meligpt.exceptions import (
     FileTooLargeError,
+    NotADirectoryToolError,
     SymlinkNotAllowedError,
     ToolValidationError,
 )
@@ -136,3 +137,49 @@ async def test_write_file_error_message_lists_received_keys(settings) -> None:
         result = str(exc)
     assert result is not None
     assert "unexpected_key" in result
+
+
+@pytest.mark.asyncio
+async def test_write_creates_missing_intermediate_directories(files_root: Path, settings) -> None:
+    """Reproduz o cenário real relatado: o modelo remoto manda um
+    caminho 'de host' (refletindo o cwd que o cliente informou a ele),
+    que dentro da nossa raiz vira subpastas ainda não criadas.
+    """
+
+    await WriteFileTool().execute(
+        {
+            "file_path": "/tmp/tmp.vqfikPR6fM/index.js",
+            "content": "console.log('Hello, World!');\n",
+        },
+        settings,
+    )
+    created = files_root / "tmp" / "tmp.vqfikPR6fM" / "index.js"
+    assert created.read_text() == "console.log('Hello, World!');\n"
+
+
+@pytest.mark.asyncio
+async def test_write_creates_multiple_nested_directories(files_root: Path, settings) -> None:
+    await WriteFileTool().execute({"file_path": "/a/b/c/d/arquivo.txt", "content": "x"}, settings)
+    assert (files_root / "a" / "b" / "c" / "d" / "arquivo.txt").read_text() == "x"
+
+
+@pytest.mark.asyncio
+async def test_write_reuses_existing_intermediate_directory(files_root: Path, settings) -> None:
+    (files_root / "existente").mkdir()
+    await WriteFileTool().execute({"file_path": "/existente/novo.txt", "content": "x"}, settings)
+    assert (files_root / "existente" / "novo.txt").read_text() == "x"
+
+
+@pytest.mark.asyncio
+async def test_write_intermediate_creation_blocked_by_existing_file(
+    files_root: Path, settings
+) -> None:
+    """Se um componente intermediário já existe como ARQUIVO (não
+    diretório), a criação automática não deve sobrescrevê-lo.
+    """
+
+    (files_root / "nao_e_pasta").write_text("sou um arquivo")
+    with pytest.raises(NotADirectoryToolError):
+        await WriteFileTool().execute(
+            {"file_path": "/nao_e_pasta/novo.txt", "content": "x"}, settings
+        )

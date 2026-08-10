@@ -17,14 +17,18 @@ from typing import Any
 
 from meligpt.auth.secrets import Credentials
 from meligpt.auth.token_manager import HarPromptCallback, TokenManager
-from meligpt.chat.events import TextDeltaEvent, ToolCallEvent
+from meligpt.catalog import ModelInfo
+from meligpt.chat.events import FinalTextEvent, TextDeltaEvent, ToolCallEvent
 from meligpt.chat.prompt_builder import interpret_prompt
 from meligpt.clients.meligpt_http import MeliGPTClient
 from meligpt.config import Settings
 from meligpt.exceptions import MeliGPTError, RecoveryFailedError, UpstreamHTTPError
 from meligpt.filesystem import discovery
+from meligpt.filesystem.atomic_io import atomic_write
 from meligpt.filesystem.context import build_local_context
+from meligpt.filesystem.security import resolve_secure
 from meligpt.logging import get_logger, log_with_fields
+from meligpt.media import download_media, extract_media_references
 from meligpt.tools.registry import ToolRegistry
 
 _logger = get_logger("chat.service")
@@ -39,6 +43,7 @@ _MIRRORED_TOOLS = {
     "grep",
     "write_todos",
     "WebSearch",
+    "bash",
 }
 
 _CONTEXT_INSTRUCTION_TEMPLATE = """\
@@ -85,12 +90,24 @@ class MirroredToolResult:
 
 
 @dataclass(frozen=True)
+class GeneratedImage:
+    """Uma imagem gerada pelo modelo remoto, detectada em ``/api/media/...``
+    dentro do texto da resposta e baixada/salva localmente.
+    """
+
+    virtual_path: str
+    url: str
+
+
+@dataclass(frozen=True)
 class ChatFinished:
     full_text: str
     had_text: bool
 
 
-ChatServiceEvent = TextChunk | InfoMessage | WarningMessage | MirroredToolResult | ChatFinished
+ChatServiceEvent = (
+    TextChunk | InfoMessage | WarningMessage | MirroredToolResult | GeneratedImage | ChatFinished
+)
 
 
 class AmbiguousDiscoveryError(MeliGPTError):
@@ -173,6 +190,7 @@ async def run_chat(
     interactive: bool = False,
     prompt_for_har: HarPromptCallback | None = None,
     credentials: Credentials | None = None,
+    model_info: ModelInfo | None = None,
 ) -> AsyncIterator[ChatServiceEvent]:
     """Executa um turno completo de chat, produzindo eventos incrementais."""
 
@@ -231,7 +249,10 @@ async def run_chat(
     while True:
         try:
             async for sse_event in client.stream_chat(
-                prompt=final_prompt, message_id=message_id, credentials=credentials
+                prompt=final_prompt,
+                message_id=message_id,
+                credentials=credentials,
+                **({"model_info": model_info} if model_info is not None else {}),
             ):
                 from meligpt.chat.events import parse_sse_data
 
@@ -239,8 +260,32 @@ async def run_chat(
                 if isinstance(parsed, TextDeltaEvent):
                     full_text_parts.append(parsed.text)
                     yield TextChunk(parsed.text)
+                elif isinstance(parsed, FinalTextEvent):
+                    if not full_text_parts:
+                        # Só usa o texto final/completo quando nenhum delta
+                        # chegou antes — evita duplicar a resposta quando o
+                        # backend manda os dois (streaming por delta E um
+                        # resumo final em `responseMessage`).
+                        full_text_parts.append(parsed.text)
+                        yield TextChunk(parsed.text)
                 elif isinstance(parsed, ToolCallEvent):
                     key = parsed.id or f"fallback:{parsed.index}:{parsed.name}"
+                    existing = tool_calls.get(key)
+                    if (
+                        existing is not None
+                        and not _has_arguments(parsed.arguments)
+                        and _has_arguments(existing.arguments)
+                    ):
+                        # O MeliGPT emite `on_run_step_completed` MAIS DE UMA VEZ
+                        # para a mesma tool call: a primeira ocorrência traz
+                        # `args` completo, e uma segunda ocorrência de
+                        # "fechamento" chega sem esse campo. Sem esta checagem,
+                        # a segunda sobrescreve a primeira com argumentos vazios
+                        # e toda ferramenta espelhada falha com "argumento
+                        # inválido" mesmo o modelo remoto tendo mandado tudo
+                        # certo (confirmado via HAR real, evento duplicado com
+                        # o mesmo tool_call id).
+                        continue
                     tool_calls[key] = parsed
             break
         except UpstreamHTTPError as exc:
@@ -260,7 +305,52 @@ async def run_chat(
         yield mirrored_event
 
     full_text = "".join(full_text_parts)
+
+    async for media_event in _download_generated_media(full_text, settings, credentials):
+        yield media_event
+
     yield ChatFinished(full_text=full_text, had_text=bool(full_text))
+
+
+async def _download_generated_media(
+    full_text: str, settings: Settings, credentials: Credentials
+) -> AsyncIterator[ChatServiceEvent]:
+    """Baixa e salva localmente qualquer imagem gerada referenciada no
+    texto final da resposta (ver :mod:`meligpt.media`).
+
+    Falha de download de UMA imagem vira um ``WarningMessage`` — nunca
+    derruba o resto do turno (o texto da resposta já foi entregue).
+    """
+
+    references = extract_media_references(full_text, base_url=settings.base_url)
+    if not references:
+        return
+
+    root = settings.resolved_media_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    for ref in references:
+        try:
+            content = await download_media(settings, credentials, ref.path)
+        except MeliGPTError as exc:
+            yield WarningMessage(f"falha ao baixar imagem gerada ({ref.path}): {exc}")
+            continue
+
+        try:
+            with resolve_secure(
+                root,
+                ref.filename,
+                allow_missing_final=True,
+                create_missing_dirs=True,
+            ) as target:
+                atomic_write(target.parent_fd, target.name, content)
+        except MeliGPTError as exc:
+            yield WarningMessage(f"falha ao salvar imagem gerada ({ref.filename}): {exc}")
+            continue
+
+        yield GeneratedImage(
+            virtual_path=str(root / ref.filename),
+            url=f"{settings.base_url}{ref.path}",
+        )
 
 
 async def _replay_tool_calls(
@@ -288,6 +378,14 @@ async def _replay_tool_calls(
             )
         elif call.name:
             yield WarningMessage(f"ferramenta não espelhada: {call.name}")
+
+
+def _has_arguments(raw: dict[str, Any] | str | None) -> bool:
+    if isinstance(raw, dict):
+        return bool(raw)
+    if isinstance(raw, str):
+        return bool(raw.strip())
+    return False
 
 
 def _truncate(text: str, limit: int = 400) -> str:

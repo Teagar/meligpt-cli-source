@@ -19,7 +19,10 @@
 | `secrets.env` (formato) | `auth/secrets.py` | mantido o mesmo formato (`ACCESS_TOKEN`, `COOKIE_HEADER`) |
 | — (não existia) | `api/` (servidor HTTP/SSE) | **novo**, pedido explicitamente nesta migração |
 | — (não existia) | `edit_file`, `glob`, `grep`, `write_todos` (implementados de verdade) | **novo, adicionado depois** — operações locais sem depender de nenhum provedor externo, ver `docs/tools.md` |
-| — (não existia) | `tools/stubs/*` (`parallel`, `task`, `WebSearch`, `ImageGeneration`) | continuam sem implementação real — exigiriam política de subagentes ou provedor externo não especificados |
+| — (não existia) | `catalog.py` (catálogo de modelos multi-provedor) + `GET /v1/models`, `/v1/models/{id}`, `/v1/providers`, `meligpt models`/`meligpt providers`, `--model`/`--endpoint` na CLI e em `/v1/chat`/`/v1/chat/completions` | **novo, adicionado depois** — sem contraparte no Bash original |
+| — (não existia) | `media.py` (detecção/download de imagens geradas via `/api/media/...`, confirmado por HAR) + evento `generated_image` em `/v1/chat` e markdown embutido em `/v1/chat/completions` | **novo, adicionado depois** — sem contraparte no Bash original |
+| — (não existia) | `WebSearch` (implementada de verdade, `tools/research/web_search.py`) | **novo, adicionado depois** — sem contraparte no Bash original |
+| — (não existia) | `tools/stubs/*` (`parallel`, `task`, `ImageGeneration` como tool_call client-side — a geração de imagem em si já funciona via `media.py`, ver `docs/tools.md`) | continuam sem implementação client-side — exigiriam política de subagentes ou schema de tool_call não confirmado por HAR |
 
 ## Itens legados (mantidos em `legacy/`)
 
@@ -37,8 +40,14 @@ removidos quando você confirmar que a versão Python atende seu uso diário.
 | `read_file` aceita `offset`/`limit` opcionais | Pedido explícito do prompt de migração (seção 4.5); omitir os dois reproduz exatamente o comportamento antigo (lê o arquivo inteiro, respeitando o limite de tamanho). | Sim, aditivo |
 | Servidor HTTP/SSE (`meligpt serve`) | Não existia no Bash; pedido explicitamente nesta migração. | Novo, não substitui a CLI |
 | `edit_file`, `glob`, `grep`, `write_todos` agora funcionam de verdade (antes eram stub) | Uso real com OpenClaude mostrou que o modelo remoto já chama essas ferramentas espontaneamente | Ferramentas novas, sem regressão — mesma segurança de filesystem das originais |
-| `parallel`, `task`, `WebSearch`, `ImageGeneration` continuam retornando `tool_not_implemented` | Sem contraparte no Bash original e sem provedor/política definidos; ver `docs/tools.md` | Sem regressão — apenas não fazem nada ainda |
+| `parallel`, `task`, `ImageGeneration` (como tool_call client-side) continuam retornando `tool_not_implemented` | Sem contraparte no Bash original e sem provedor/política/schema definidos; ver `docs/tools.md` — a geração de imagem em si funciona via `media.py`, sem depender desta ferramenta | Sem regressão — apenas não fazem nada ainda |
 | Mensagens de erro em português, com `code` estável em inglês (`snake_case`) | Facilita internacionalização futura sem quebrar clientes que só olham `code`. | O *campo* `code` é a interface estável, não o texto de `error` |
+
+## Correções pós-lançamento
+
+| Data | Bug | Correção |
+|---|---|---|
+| 2026-08-10 | Com `MELIGPT_FILES_DIR=/` (modo de acesso total ao filesystem, usado para deixar o OpenClaude editar/criar arquivos reais), baixar uma imagem gerada falhava com `falha ao salvar imagem gerada: não foi possível criar diretório intermediário: generated-images/...` — a pasta de mídia tentava se criar sob a raiz real do filesystem (`/generated-images`), que exige permissão de root. Encontrado via teste end-to-end real com `openclaude -p`. | `Settings.resolved_media_dir()` (nova, default `config_dir/generated-images`) é agora sempre independente de `files_dir` — nunca tenta gravar sob a raiz do filesystem. Ver `tests/integration/test_chat_service.py::test_run_chat_downloads_generated_image_with_full_filesystem_access` (regressão exata do bug) e `tests/unit/test_full_filesystem_guard.py::test_media_dir_independent_of_root_files_dir`. |
 
 ## Plano de rollback
 

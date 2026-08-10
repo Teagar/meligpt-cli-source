@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from meligpt.auth.secrets import Credentials
+from meligpt.catalog import ModelInfo
 from meligpt.config import Settings
 from meligpt.exceptions import (
     UpstreamError,
@@ -29,7 +30,12 @@ _logger = get_logger("clients.meligpt_http")
 
 
 def _build_payload(
-    prompt: str, message_id: str, model: str, *, browsing: bool = False
+    prompt: str,
+    message_id: str,
+    model: str,
+    *,
+    browsing: bool = False,
+    payload_endpoint: str = "openAI",
 ) -> dict[str, Any]:
     return {
         "text": prompt,
@@ -45,7 +51,7 @@ def _build_payload(
         "generation": "",
         "responseMessageId": None,
         "overrideParentMessageId": None,
-        "endpoint": "openAI",
+        "endpoint": payload_endpoint,
         "model": model,
         "key": "newer",
         "isContinued": False,
@@ -83,9 +89,23 @@ class MeliGPTClient:
         )
 
     async def stream_chat(
-        self, *, prompt: str, message_id: str, credentials: Credentials
+        self,
+        *,
+        prompt: str,
+        message_id: str,
+        credentials: Credentials,
+        model_info: ModelInfo | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Envia a mensagem e produz eventos SSE já decodificados (JSON).
+
+        ``model_info``, quando informado (resolvido via
+        :func:`meligpt.catalog.resolve_model`), sobrescreve a rota HTTP
+        (``model_info.route``), o modelo (``model_info.id``) e o campo
+        ``endpoint`` do payload (``model_info.payload_endpoint``) — que
+        pode ser diferente da rota, ex.: Claude usa a rota
+        ``/api/ask/generic`` mas manda ``"endpoint": "bedrock"``. Sem
+        ``model_info``, preserva o comportamento padrão baseado em
+        ``Settings`` (``resolved_endpoint()`` / ``model`` / ``"openAI"``).
 
         Levanta:
         - :class:`UpstreamHTTPError` (com ``status_code=401``) em token
@@ -98,13 +118,20 @@ class MeliGPTClient:
           transporte.
         """
 
-        endpoint = self._settings.resolved_endpoint()
+        endpoint = (
+            f"{self._settings.base_url}{model_info.route}"
+            if model_info
+            else self._settings.resolved_endpoint()
+        )
+        model = model_info.id if model_info else self._settings.model
+        payload_endpoint = model_info.payload_endpoint if model_info else "openAI"
         headers = _build_headers(self._settings, credentials)
         payload = _build_payload(
             prompt,
             message_id,
-            self._settings.model,
+            model,
             browsing=self._settings.enable_browsing,
+            payload_endpoint=payload_endpoint,
         )
 
         try:
