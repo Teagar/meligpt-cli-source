@@ -51,7 +51,7 @@ def test_openai_models_list_filters_by_provider(client: TestClient) -> None:
     response = client.get("/v1/models", params={"provider": "google"})
     assert response.status_code == 200
     ids = {m["id"] for m in response.json()["data"]}
-    assert ids == {"gemini-3.6-flash", "veo-3.1-generate", "veo-3.1-fast-generate"}
+    assert ids == {"gemini-3.6-flash", "veo-3.1-generate-001", "veo-3.1-fast-generate-001"}
 
 
 def test_openai_models_list_filters_by_endpoint(client: TestClient) -> None:

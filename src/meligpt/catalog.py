@@ -140,20 +140,26 @@ _CHAT_MODELS: tuple[ModelInfo, ...] = (
 )
 
 #: Modelos de VÍDEO — nomes de exibição confirmados pelo usuário (visto no
-#: seletor de modelo do MeliGPT em 2026-08-10), mas os **ids** abaixo são
-#: INFERIDOS (slug do nome de exibição, seguindo o padrão dos ids
-#: confirmados acima) — não vimos o payload real de uma requisição com
-#: esses modelos, então não sabemos com certeza o valor exato que vai no
-#: campo ``"model"`` do JSON. Provider e rota (via `KNOWN_ROUTES`) seguem
-#: o mesmo padrão dos modelos de chat do mesmo provedor, esses sim
-#: confirmados. Se algum desses ids não bater com o que o MeliGPT espera
-#: (erro do servidor ao usar `--model`), corrija a string aqui — é o único
-#: lugar que precisa mudar.
+#: seletor de modelo do MeliGPT em 2026-08-10/11). Confirmação por HAR
+#: real (requisições de geração de vídeo bem-sucedidas):
+#: - ``veo-3.1-fast-generate-001``, ``veo-3.1-generate-001``, ``sora-2``,
+#:   ``happyhorse-1.0-t2v``: CONFIRMADOS — todos os 4 têm HAR de uma
+#:   geração bem-sucedida (2026-08-10/11), ver
+#:   ``tests/fixtures/video_generation_sse*.txt`` e
+#:   ``tests/integration/test_video_generation_real_har.py``.
+#: Se algum id parar de bater (o MeliGPT pode trocar de versão), corrija
+#: a string aqui — é o único lugar que precisa mudar.
 _VIDEO_MODELS: tuple[ModelInfo, ...] = (
     _model("sora-2", "Sora 2", "openAI", "openAI", type="video"),
-    _model("veo-3.1-generate", "Veo 3.1 Generate", "google", "google", type="video"),
-    _model("veo-3.1-fast-generate", "Veo 3.1 Fast Generate", "google", "google", type="video"),
-    _model("happyhorse-1.0", "HappyHorse 1.0", "alibaba", "alibaba", type="video"),
+    _model("veo-3.1-generate-001", "Veo 3.1 Generate", "google", "google", type="video"),
+    _model(
+        "veo-3.1-fast-generate-001",
+        "Veo 3.1 Fast Generate",
+        "google",
+        "google",
+        type="video",
+    ),
+    _model("happyhorse-1.0-t2v", "HappyHorse 1.0", "alibaba", "alibaba", type="video"),
 )
 
 FALLBACK_MODELS: tuple[ModelInfo, ...] = _CHAT_MODELS + _VIDEO_MODELS

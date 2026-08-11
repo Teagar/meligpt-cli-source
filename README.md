@@ -329,30 +329,47 @@ usa para essas ações, que não temos evidência de HAR.
 
 ### Modelos de vídeo
 
-O catálogo (`meligpt models`) inclui 4 modelos de vídeo, cujos **nomes
-de exibição** foram confirmados pelo usuário no seletor do MeliGPT, mas
-cujos **ids técnicos abaixo são inferidos** (seguindo o padrão dos ids
-de chat já confirmados por HAR) — nunca vimos o payload real de uma
-requisição usando eles:
+O catálogo (`meligpt models`) inclui 4 modelos de vídeo — **todos os 4
+ids confirmados por HAR real** (geração bem-sucedida de cada um,
+2026-08-10/11; ver `tests/fixtures/video_generation_sse_*.txt` e
+`tests/integration/test_video_generation_real_har.py`):
 
-| Nome de exibição | Id inferido | Provedor |
+| Nome de exibição | Id | Provedor |
 |---|---|---|
+| Veo 3.1 Fast Generate | `veo-3.1-fast-generate-001` | google |
+| Veo 3.1 Generate | `veo-3.1-generate-001` | google |
 | Sora 2 | `sora-2` | openAI |
-| Veo 3.1 Generate | `veo-3.1-generate` | google |
-| Veo 3.1 Fast Generate | `veo-3.1-fast-generate` | google |
-| HappyHorse 1.0 | `happyhorse-1.0` | alibaba |
+| HappyHorse 1.0 | `happyhorse-1.0-t2v` | alibaba |
 
 ```bash
-meligpt chat --model sora-2 "gere um vídeo de um gato correndo"
+meligpt chat --model veo-3.1-fast-generate-001 "gere um vídeo de um gato correndo"
 ```
 
-No OpenClaude, `/model` (ou o seletor equivalente) troca o modelo pra
-`sora-2`/`veo-3.1-generate`/etc., e o pedido de vídeo funciona pelo
-`/v1/chat/completions` normalmente (ver "Rotas HTTP via API" acima).
+No OpenClaude, `/model` (ou o seletor equivalente) troca o modelo, e o
+pedido de vídeo funciona pelo `/v1/chat/completions` normalmente (ver
+"Rotas HTTP via API" acima).
 
-Se o id não bater com o que o MeliGPT espera de verdade (erro do
+Nenhum dos 4 ids era adivinhável só pelo nome de exibição — Veo e
+HappyHorse têm sufixos de versão (`-001`, `-t2v`) que só apareceram no
+payload real. Se o MeliGPT trocar de versão no futuro (erro do
 servidor), o único lugar que precisa mudar é `_VIDEO_MODELS` em
-`src/meligpt/catalog.py` — troque a string do id pela correta.
+`src/meligpt/catalog.py`.
+
+**Confirmado pelos mesmos HARs** (e já corrigido no código):
+- O payload da requisição sempre inclui um campo `"examples"`
+  (`[{"input": {"content": ""}, "output": {"content": ""}}]`) que nossa
+  implementação não mandava antes — isso quebrava geração de vídeo.
+- A resposta final vem como uma tag `<videoplayer url="/api/media/..."/>`
+  (não markdown) — a extração de mídia já lida com isso (é baseada em
+  regex sobre o texto, não assume nenhum formato específico ao redor do
+  link).
+- O evento SSE de nível de transporte é `event: message` com payload
+  `{"final": true, "responseMessage": {...}}` — diferente de
+  `on_message_delta`/`on_run_step_completed` (texto/imagem), mas nosso
+  parser já reconhecia `responseMessage` independente do nome do evento.
+- Confirmado com os 4 provedores diferentes (openAI, google, alibaba →
+  generic) — a mesma rota (`/api/ask/{endpoint}`) e o mesmo formato de
+  resposta valem pra qualquer um deles.
 
 ## Testes
 

@@ -1,0 +1,16 @@
+event: message
+data: {"message":{"messageId":"f8ff4834-092f-40b3-8529-7db967af61db","parentMessageId":"00000000-0000-0000-0000-000000000000","conversationId":"4620b9aa-a91d-4f91-96e3-906bcf4ba29a","sender":"User","text":"Crie um video de uma bola quicando","isCreatedByUser":true,"projectId":null},"created":true}
+
+: ping
+
+: ping
+
+: ping
+
+: ping
+
+: ping
+
+event: message
+data: {"final":true,"conversation":{"_id":"4620b9aa-a91d-4f91-96e3-906bcf4ba29a","conversationId":"4620b9aa-a91d-4f91-96e3-906bcf4ba29a","createdAt":"2026-08-11T07:09:53.665Z","endpoint":"alibaba","isProjectConvo":false,"messages":["f8ff4834-092f-40b3-8529-7db967af61db"],"model":"happyhorse-1.0-t2v","projectId":null,"resendFiles":true,"tools":[],"updatedAt":"2026-08-11T07:09:53.665Z","user":"69a6d3ab29b848ccb550efbf","title":"New Chat"},"title":"New Chat","requestMessage":{"messageId":"f8ff4834-092f-40b3-8529-7db967af61db","parentMessageId":"00000000-0000-0000-0000-000000000000","conversationId":"4620b9aa-a91d-4f91-96e3-906bcf4ba29a","sender":"User","text":"Crie um video de uma bola quicando","isCreatedByUser":true,"projectId":null},"responseMessage":{"messageId":"71730a11-d735-4bed-8b32-512e41f1b794","conversationId":"4620b9aa-a91d-4f91-96e3-906bcf4ba29a","parentMessageId":"f8ff4834-092f-40b3-8529-7db967af61db","isCreatedByUser":false,"model":"happyhorse-1.0-t2v","sender":"HappyHorse 1.0","endpoint":"alibaba","text":"<videoplayer url=\"/api/media/69a6d3ab29b848ccb550efbf/090b5bff-a186-4d67-a190-a1e2b46eb2a3.mp4\"/>"}}
+

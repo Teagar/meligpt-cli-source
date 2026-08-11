@@ -1,0 +1,12 @@
+event: message
+data: {"message":{"messageId":"6fc3f0de-3d3d-412e-9bf4-9b7a9f0e1990","parentMessageId":"00000000-0000-0000-0000-000000000000","conversationId":"5448cafa-7c8b-4049-a9d2-b2470f6b6f59","sender":"User","text":"Crie um video de uma bola pulando","isCreatedByUser":true,"projectId":null},"created":true}
+
+: ping
+
+: ping
+
+: ping
+
+event: message
+data: {"final":true,"conversation":{"_id":"5448cafa-7c8b-4049-a9d2-b2470f6b6f59","conversationId":"5448cafa-7c8b-4049-a9d2-b2470f6b6f59","createdAt":"2026-08-10T00:46:45.073Z","endpoint":"google","isProjectConvo":false,"messages":["6fc3f0de-3d3d-412e-9bf4-9b7a9f0e1990"],"model":"veo-3.1-fast-generate-001","projectId":null,"resendFiles":true,"tools":[],"updatedAt":"2026-08-10T00:46:45.073Z","user":"69a6d3ab29b848ccb550efbf","title":"New Chat"},"title":"New Chat","requestMessage":{"messageId":"6fc3f0de-3d3d-412e-9bf4-9b7a9f0e1990","parentMessageId":"00000000-0000-0000-0000-000000000000","conversationId":"5448cafa-7c8b-4049-a9d2-b2470f6b6f59","sender":"User","text":"Crie um video de uma bola pulando","isCreatedByUser":true,"projectId":null},"responseMessage":{"messageId":"b641a8da-98b7-4c68-9d6e-bb855b6aa32a","conversationId":"5448cafa-7c8b-4049-a9d2-b2470f6b6f59","parentMessageId":"6fc3f0de-3d3d-412e-9bf4-9b7a9f0e1990","isCreatedByUser":false,"model":"veo-3.1-fast-generate-001","sender":"IA","endpoint":"google","text":"<videoplayer url=\"/api/media/69a6d3ab29b848ccb550efbf/7412cc65-26d8-47db-9e8c-50390720446c.mp4\"/>"}}
+

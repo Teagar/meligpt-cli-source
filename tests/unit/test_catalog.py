@@ -24,9 +24,9 @@ def test_fallback_models_include_video_models() -> None:
     video_ids = {m.id for m in FALLBACK_MODELS if m.type == "video"}
     assert video_ids == {
         "sora-2",
-        "veo-3.1-generate",
-        "veo-3.1-fast-generate",
-        "happyhorse-1.0",
+        "veo-3.1-generate-001",
+        "veo-3.1-fast-generate-001",
+        "happyhorse-1.0-t2v",
     }
 
 
@@ -64,8 +64,8 @@ async def test_list_models_filters_by_provider_and_endpoint(settings) -> None:
     google_models = await catalog.list_models(provider="google")
     assert {m.id for m in google_models} == {
         "gemini-3.6-flash",
-        "veo-3.1-generate",
-        "veo-3.1-fast-generate",
+        "veo-3.1-generate-001",
+        "veo-3.1-fast-generate-001",
     }
 
     bedrock_models = await catalog.list_models(endpoint="bedrock")
