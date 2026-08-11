@@ -102,5 +102,100 @@ def test_chat_emits_generated_image_event_when_media_link_present(
     response = client.post("/v1/chat", json={"message": "gere uma imagem"})
     assert response.status_code == 200
     body = response.text
-    assert "event: generated_image" in body
+    assert "event: generated_media" in body
     assert "/generated-images/image_x.png" in body
+
+
+def test_chat_with_media_dir_saves_to_requested_folder(
+    client: TestClient, settings, monkeypatch
+) -> None:
+    import meligpt.chat.service as service_module
+    import meligpt.clients.meligpt_http as client_module
+
+    async def fake_stream(self, *, prompt, message_id, credentials, model_info=None):
+        yield {
+            "event": "on_message_delta",
+            "data": {
+                "delta": {"content": [{"type": "text", "text": "veja: /api/media/u1/image_x.png"}]}
+            },
+        }
+
+    async def fake_download_media(settings_, credentials_, path, *, transport=None):
+        return b"IMGBYTES"
+
+    monkeypatch.setattr(client_module.MeliGPTClient, "stream_chat", fake_stream)
+    monkeypatch.setattr(service_module, "download_media", fake_download_media)
+
+    response = client.post(
+        "/v1/chat",
+        json={"message": "gere uma imagem", "media_dir": "onde-eu-pedi"},
+    )
+    assert response.status_code == 200
+    body = response.text
+    assert "onde-eu-pedi" in body
+    saved = settings.resolved_files_dir() / "onde-eu-pedi" / "image_x.png"
+    assert saved.read_bytes() == b"IMGBYTES"
+
+
+def test_chat_emits_video_media_type(client: TestClient, monkeypatch) -> None:
+    import meligpt.chat.service as service_module
+    import meligpt.clients.meligpt_http as client_module
+
+    async def fake_stream(self, *, prompt, message_id, credentials, model_info=None):
+        yield {
+            "event": "on_message_delta",
+            "data": {
+                "delta": {"content": [{"type": "text", "text": "veja: /api/media/u1/video_x.mp4"}]}
+            },
+        }
+
+    async def fake_download_media(settings_, credentials_, path, *, transport=None):
+        return b"VIDBYTES"
+
+    monkeypatch.setattr(client_module.MeliGPTClient, "stream_chat", fake_stream)
+    monkeypatch.setattr(service_module, "download_media", fake_download_media)
+
+    response = client.post("/v1/chat", json={"message": "gere um vídeo"})
+    assert response.status_code == 200
+    assert '"media_type": "video"' in response.text
+
+
+def test_chat_with_video_model_generates_and_saves_video(
+    client: TestClient, settings, monkeypatch
+) -> None:
+    """Fim a fim: `/v1/chat` com `model="sora-2"` (tipo vídeo) tem que
+    funcionar — `require_type=None` nesse endpoint é o que permite isso
+    (diferente de `/v1/chat/completions`, que rejeitaria)."""
+
+    import meligpt.chat.service as service_module
+    import meligpt.clients.meligpt_http as client_module
+
+    captured: dict = {}
+
+    async def fake_stream(self, *, prompt, message_id, credentials, model_info=None):
+        captured["model_info"] = model_info
+        yield {
+            "event": "on_message_delta",
+            "data": {
+                "delta": {
+                    "content": [{"type": "text", "text": "pronto: /api/media/u1/video_gato.mp4"}]
+                }
+            },
+        }
+
+    async def fake_download_media(settings_, credentials_, path, *, transport=None):
+        return b"VIDEOBYTES"
+
+    monkeypatch.setattr(client_module.MeliGPTClient, "stream_chat", fake_stream)
+    monkeypatch.setattr(service_module, "download_media", fake_download_media)
+
+    response = client.post(
+        "/v1/chat", json={"message": "gere um vídeo de um gato correndo", "model": "sora-2"}
+    )
+    assert response.status_code == 200
+    assert captured["model_info"].id == "sora-2"
+    assert captured["model_info"].type == "video"
+    assert '"media_type": "video"' in response.text
+
+    saved = settings.resolved_media_dir() / "video_gato.mp4"
+    assert saved.read_bytes() == b"VIDEOBYTES"

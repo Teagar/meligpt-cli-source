@@ -23,7 +23,7 @@ from meligpt.api.schemas import ChatRequest, HealthResponse
 from meligpt.catalog import ModelCatalog, resolve_model
 from meligpt.chat.service import (
     ChatFinished,
-    GeneratedImage,
+    GeneratedMedia,
     InfoMessage,
     MirroredToolResult,
     TextChunk,
@@ -75,7 +75,13 @@ def build_chat_router(
         request_id = new_request_id()
 
         try:
-            model_info = await resolve_model(catalog, model_id=body.model, provider=body.endpoint)
+            # require_type=None: `/v1/chat` aceita modelos de vídeo/imagem
+            # também — diferente de `/v1/chat/completions`, que restringe a
+            # "chat" (ver openai_compat.py) por ser voltado a assistentes de
+            # código conversando em texto.
+            model_info = await resolve_model(
+                catalog, model_id=body.model, provider=body.endpoint, require_type=None
+            )
         except MeliGPTError as exc:
             return JSONResponse(status_code=400, content=exc.to_dict())
 
@@ -92,6 +98,7 @@ def build_chat_router(
                     interactive=False,
                     prompt_for_har=None,
                     model_info=model_info,
+                    media_dir=body.media_dir,
                 ):
                     if await request.is_disconnected():
                         log_with_fields(
@@ -116,11 +123,15 @@ def build_chat_router(
                                 }
                             ),
                         }
-                    elif isinstance(event, GeneratedImage):
+                    elif isinstance(event, GeneratedMedia):
                         yield {
-                            "event": "generated_image",
+                            "event": "generated_media",
                             "data": json.dumps(
-                                {"virtual_path": event.virtual_path, "url": event.url}
+                                {
+                                    "virtual_path": event.virtual_path,
+                                    "url": event.url,
+                                    "media_type": event.media_type,
+                                }
                             ),
                         }
                     elif isinstance(event, ChatFinished):

@@ -53,6 +53,12 @@ def _build_payload(
         "overrideParentMessageId": None,
         "endpoint": payload_endpoint,
         "model": model,
+        # Confirmado por HAR real (requisição de vídeo, 2026-08-10):
+        # sempre presente no payload, mesmo com conteúdo vazio. Nossa
+        # implementação nunca mandava isso antes — pode ser exigido pelo
+        # backend para alguns modelos (ex.: geração de vídeo) mesmo que
+        # pareça inofensivo para os demais.
+        "examples": [{"input": {"content": ""}, "output": {"content": ""}}],
         "key": "newer",
         "isContinued": False,
     }

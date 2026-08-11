@@ -205,12 +205,14 @@ Rotas HTTP via API:
   contrário preserva o comportamento padrão (`Settings.model` /
   `resolved_endpoint()`) — então clientes como o OpenClaude, que sempre
   mandam um rótulo genérico (`"meligpt"`), continuam funcionando sem
-  mudança nenhuma. Modelos do tipo `image`/`video` são rejeitados com
-  `400 model_type_not_supported` neste endpoint.
+  mudança nenhuma. Aceita modelos de qualquer tipo (chat/image/video) —
+  é o único endpoint que clientes OpenAI-compatible como o OpenClaude
+  falam, então bloquear por tipo os deixaria inacessíveis na prática.
 
 Sem `MELIGPT_MODELS_URL` configurado (não há evidência de HAR para uma
 URL de catálogo remoto real — fica puramente opcional), o servidor usa um
-catálogo local fixo com os 8 modelos confirmados manualmente. Ver
+catálogo local fixo com os 12 modelos confirmados/inferidos manualmente
+(8 de chat + 4 de vídeo — ver seção "Modelos de vídeo" abaixo). Ver
 `.env.example` para `MELIGPT_MODELS_URL` / `MELIGPT_MODELS_CACHE_SECONDS`.
 
 **Memória de conversa:** o MeliGPT não expõe `conversationId` persistente
@@ -286,33 +288,88 @@ Ver [`docs/tools.md`](docs/tools.md) para o schema completo de cada uma.
 > Fora de um container assim, ligar essa ferramenta equivale a dar
 > acesso de shell ao host onde o `meligpt serve` está rodando.
 
-## Geração de imagens
+## Geração de imagens e vídeos
 
-Quando o modelo remoto gera uma imagem, o MeliGPT serve o arquivo via
-`GET /api/media/{userId}/{filename}` (rota confirmada por HAR). O
-servidor detecta esse link no texto da resposta, baixa a imagem
-autenticada e salva localmente em `MELIGPT_CONFIG_DIR/generated-images/`
-(configurável via `MELIGPT_MEDIA_DIR`) — sem precisar de nenhuma
-ferramenta adicional do lado do modelo.
+Quando o modelo remoto gera uma imagem ou vídeo, o MeliGPT serve o
+arquivo via `GET /api/media/{userId}/{filename}` (rota confirmada por
+HAR — vista com imagens, mas independente de extensão, então vídeo
+funciona pelo mesmo mecanismo). O servidor detecta esse link no texto da
+resposta, baixa o arquivo autenticado e salva localmente — sem precisar
+de nenhuma ferramenta adicional do lado do modelo.
 
-> Esse diretório é **sempre** independente de `MELIGPT_FILES_DIR`,
-> mesmo em modo de acesso total (`MELIGPT_FILES_DIR=/`) — gravar sob a
-> raiz real do filesystem exigiria permissão de root e falharia (bug
-> real encontrado e corrigido em teste end-to-end; ver
-> `docs/migration.md` para o changelog).
+**Onde é salvo:**
+- Por padrão: `MELIGPT_CONFIG_DIR/generated-images/` (configurável via
+  `MELIGPT_MEDIA_DIR`) — **sempre** independente de `MELIGPT_FILES_DIR`,
+  mesmo em modo de acesso total (`MELIGPT_FILES_DIR=/`), porque gravar
+  sob a raiz real do filesystem exigiria permissão de root e falharia
+  (bug real encontrado e corrigido em teste end-to-end; ver
+  `docs/migration.md` para o changelog).
+- Pra escolher onde salvar num turno específico, use `--media-dir`
+  (CLI) ou o campo `"media_dir"` (`/v1/chat` e `/v1/chat/completions`)
+  — caminho relativo à raiz de arquivos configurada, ou absoluto em modo
+  de acesso total (mesma semântica de `write_file`):
+  ```bash
+  meligpt chat --media-dir minhas-imagens "gere um gato"
+  meligpt chat --media-dir /home/voce/Imagens "gere um gato"
+  ```
 
-- **CLI**: aparece como `Imagem gerada salva em: <caminho absoluto>`.
-- **`POST /v1/chat`** (SSE): evento `generated_image` com `virtual_path`
-  e `url`.
+**Como aparece:**
+- **CLI**: `Imagem gerada salva em: <caminho>` ou `Vídeo gerado salvo em: <caminho>`.
+- **`POST /v1/chat`** (SSE): evento `generated_media` com `virtual_path`,
+  `url` e `media_type` (`"image"`/`"video"`/`"other"`).
 - **`POST /v1/chat/completions`** (compatível OpenAI, streaming e
-  não-streaming): a imagem aparece embutida no texto da resposta como
-  `![imagem gerada](<caminho absoluto>)`.
+  não-streaming): aparece embutido no texto da resposta como
+  `![imagem gerada](<caminho>)` ou `![vídeo gerado](<caminho>)`.
 
-Falha ao baixar uma imagem específica vira um aviso — nunca derruba o
-resto da resposta. Não há suporte (ainda) para reenviar uma imagem
-gerada de volta como referência num próximo turno, nem para editar uma
-imagem existente — isso exigiria confirmar o schema de tool_call que o
-MeliGPT usa para essas ações, que não temos evidência de HAR.
+Falha ao baixar um arquivo específico vira um aviso — nunca derruba o
+resto da resposta. Não há suporte (ainda) para reenviar uma imagem/vídeo
+gerado de volta como referência num próximo turno, nem para editar mídia
+existente — isso exigiria confirmar o schema de tool_call que o MeliGPT
+usa para essas ações, que não temos evidência de HAR.
+
+### Modelos de vídeo
+
+O catálogo (`meligpt models`) inclui 4 modelos de vídeo — **todos os 4
+ids confirmados por HAR real** (geração bem-sucedida de cada um,
+2026-08-10/11; ver `tests/fixtures/video_generation_sse_*.txt` e
+`tests/integration/test_video_generation_real_har.py`):
+
+| Nome de exibição | Id | Provedor |
+|---|---|---|
+| Veo 3.1 Fast Generate | `veo-3.1-fast-generate-001` | google |
+| Veo 3.1 Generate | `veo-3.1-generate-001` | google |
+| Sora 2 | `sora-2` | openAI |
+| HappyHorse 1.0 | `happyhorse-1.0-t2v` | alibaba |
+
+```bash
+meligpt chat --model veo-3.1-fast-generate-001 "gere um vídeo de um gato correndo"
+```
+
+No OpenClaude, `/model` (ou o seletor equivalente) troca o modelo, e o
+pedido de vídeo funciona pelo `/v1/chat/completions` normalmente (ver
+"Rotas HTTP via API" acima).
+
+Nenhum dos 4 ids era adivinhável só pelo nome de exibição — Veo e
+HappyHorse têm sufixos de versão (`-001`, `-t2v`) que só apareceram no
+payload real. Se o MeliGPT trocar de versão no futuro (erro do
+servidor), o único lugar que precisa mudar é `_VIDEO_MODELS` em
+`src/meligpt/catalog.py`.
+
+**Confirmado pelos mesmos HARs** (e já corrigido no código):
+- O payload da requisição sempre inclui um campo `"examples"`
+  (`[{"input": {"content": ""}, "output": {"content": ""}}]`) que nossa
+  implementação não mandava antes — isso quebrava geração de vídeo.
+- A resposta final vem como uma tag `<videoplayer url="/api/media/..."/>`
+  (não markdown) — a extração de mídia já lida com isso (é baseada em
+  regex sobre o texto, não assume nenhum formato específico ao redor do
+  link).
+- O evento SSE de nível de transporte é `event: message` com payload
+  `{"final": true, "responseMessage": {...}}` — diferente de
+  `on_message_delta`/`on_run_step_completed` (texto/imagem), mas nosso
+  parser já reconhecia `responseMessage` independente do nome do evento.
+- Confirmado com os 4 provedores diferentes (openAI, google, alibaba →
+  generic) — a mesma rota (`/api/ask/{endpoint}`) e o mesmo formato de
+  resposta valem pra qualquer um deles.
 
 ## Testes
 

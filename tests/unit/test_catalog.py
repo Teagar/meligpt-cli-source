@@ -16,8 +16,18 @@ from meligpt.exceptions import ModelNotFoundError, ProviderNotFoundError
 
 def test_fallback_models_have_gpt_sol_first() -> None:
     assert FALLBACK_MODELS[0].id == "gpt-5.6-sol"
-    assert len(FALLBACK_MODELS) == 8
-    assert len({m.id for m in FALLBACK_MODELS}) == 8
+    assert len(FALLBACK_MODELS) == 12
+    assert len({m.id for m in FALLBACK_MODELS}) == 12
+
+
+def test_fallback_models_include_video_models() -> None:
+    video_ids = {m.id for m in FALLBACK_MODELS if m.type == "video"}
+    assert video_ids == {
+        "sora-2",
+        "veo-3.1-generate-001",
+        "veo-3.1-fast-generate-001",
+        "happyhorse-1.0-t2v",
+    }
 
 
 def test_claude_uses_generic_route_but_bedrock_payload_endpoint() -> None:
@@ -52,7 +62,11 @@ async def test_get_returns_none_for_unknown_id(settings) -> None:
 async def test_list_models_filters_by_provider_and_endpoint(settings) -> None:
     catalog = ModelCatalog(settings)
     google_models = await catalog.list_models(provider="google")
-    assert [m.id for m in google_models] == ["gemini-3.6-flash"]
+    assert {m.id for m in google_models} == {
+        "gemini-3.6-flash",
+        "veo-3.1-generate-001",
+        "veo-3.1-fast-generate-001",
+    }
 
     bedrock_models = await catalog.list_models(endpoint="bedrock")
     assert [m.id for m in bedrock_models] == ["claude-5-sonnet"]
@@ -237,6 +251,35 @@ async def test_resolve_model_rejects_non_chat_type(settings) -> None:
 
     with pytest.raises(ModelTypeNotSupportedError):
         await resolve_model(catalog, model_id="image-model")
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_by_id_accepts_video_with_require_type_none(settings) -> None:
+    catalog = ModelCatalog(settings)
+    model = await resolve_model(catalog, model_id="sora-2", require_type=None)
+    assert model is not None
+    assert model.id == "sora-2"
+    assert model.type == "video"
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_by_id_video_rejected_with_default_require_type(settings) -> None:
+    from meligpt.exceptions import ModelTypeNotSupportedError
+
+    catalog = ModelCatalog(settings)
+    with pytest.raises(ModelTypeNotSupportedError):
+        await resolve_model(catalog, model_id="sora-2")
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_by_provider_with_require_type_none_picks_first(settings) -> None:
+    """openAI tem modelos de chat E o Sora 2 (vídeo) — sem restrição de
+    tipo, pega o primeiro da lista (chat, por vir primeiro no catálogo)."""
+
+    catalog = ModelCatalog(settings)
+    model = await resolve_model(catalog, provider="openAI", require_type=None)
+    assert model is not None
+    assert model.id == "gpt-5.6-sol"
 
 
 def test_json_import_smoke() -> None:

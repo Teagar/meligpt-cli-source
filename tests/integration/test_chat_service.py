@@ -8,7 +8,7 @@ from meligpt.auth.secrets import Credentials, save_credentials
 from meligpt.chat.service import (
     AmbiguousDiscoveryError,
     ChatFinished,
-    GeneratedImage,
+    GeneratedMedia,
     MirroredToolResult,
     TextChunk,
     WarningMessage,
@@ -448,7 +448,7 @@ async def test_run_chat_downloads_and_saves_generated_image(
         )
     ]
 
-    generated = [e for e in events if isinstance(e, GeneratedImage)]
+    generated = [e for e in events if isinstance(e, GeneratedMedia)]
     assert len(generated) == 1
     expected_path = str(settings.resolved_media_dir() / "image_abc123.png")
     assert generated[0].virtual_path == expected_path
@@ -508,7 +508,7 @@ async def test_run_chat_downloads_generated_image_with_full_filesystem_access(
     warnings = [e for e in events if isinstance(e, WarningMessage)]
     assert not [w for w in warnings if "falha ao salvar imagem gerada" in w.message], warnings
 
-    generated = [e for e in events if isinstance(e, GeneratedImage)]
+    generated = [e for e in events if isinstance(e, GeneratedMedia)]
     assert len(generated) == 1
     saved_path = tmp_path / "config" / "generated-images" / "image_abc123.png"
     assert saved_path.read_bytes() == b"FAKEPNGBYTES"
@@ -542,9 +542,9 @@ async def test_run_chat_warns_but_continues_when_image_download_fails(
         )
     ]
 
-    assert not [e for e in events if isinstance(e, GeneratedImage)]
+    assert not [e for e in events if isinstance(e, GeneratedMedia)]
     warnings = [e for e in events if isinstance(e, WarningMessage)]
-    assert any("falha ao baixar imagem gerada" in w.message for w in warnings)
+    assert any("falha ao baixar mídia gerada" in w.message for w in warnings)
     # o texto da resposta ainda deve ter sido entregue normalmente
     finished = next(e for e in events if isinstance(e, ChatFinished))
     assert finished.had_text is True
@@ -564,4 +564,174 @@ async def test_run_chat_without_media_link_yields_no_generated_image(settings, m
         )
     ]
 
-    assert not [e for e in events if isinstance(e, GeneratedImage)]
+    assert not [e for e in events if isinstance(e, GeneratedMedia)]
+
+
+async def _fake_stream_with_generated_video(self, *, prompt, message_id, credentials):
+    yield {
+        "event": "on_message_delta",
+        "data": {
+            "delta": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "aqui está: /api/media/u1/video_abc123.mp4",
+                    }
+                ]
+            }
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_chat_classifies_video_media_type(settings, monkeypatch) -> None:
+    import meligpt.chat.service as service_module
+    import meligpt.clients.meligpt_http as client_module
+
+    monkeypatch.setattr(
+        client_module.MeliGPTClient, "stream_chat", _fake_stream_with_generated_video
+    )
+
+    async def fake_download_media(settings_, credentials_, path, *, transport=None):
+        return b"FAKEVIDEOBYTES"
+
+    monkeypatch.setattr(service_module, "download_media", fake_download_media)
+
+    registry = build_default_registry()
+    events = [
+        e
+        async for e in run_chat(
+            prompt="gere um vídeo",
+            settings=settings,
+            registry=registry,
+            discovery_enabled=False,
+        )
+    ]
+
+    generated = [e for e in events if isinstance(e, GeneratedMedia)]
+    assert len(generated) == 1
+    assert generated[0].media_type == "video"
+    saved_path = settings.resolved_media_dir() / "video_abc123.mp4"
+    assert saved_path.read_bytes() == b"FAKEVIDEOBYTES"
+
+
+@pytest.mark.asyncio
+async def test_run_chat_classifies_image_media_type(settings, monkeypatch) -> None:
+    import meligpt.chat.service as service_module
+    import meligpt.clients.meligpt_http as client_module
+
+    monkeypatch.setattr(
+        client_module.MeliGPTClient, "stream_chat", _fake_stream_with_generated_image
+    )
+
+    async def fake_download_media(settings_, credentials_, path, *, transport=None):
+        return b"FAKEPNGBYTES"
+
+    monkeypatch.setattr(service_module, "download_media", fake_download_media)
+
+    registry = build_default_registry()
+    events = [
+        e
+        async for e in run_chat(
+            prompt="gere uma imagem",
+            settings=settings,
+            registry=registry,
+            discovery_enabled=False,
+        )
+    ]
+
+    generated = [e for e in events if isinstance(e, GeneratedMedia)]
+    assert len(generated) == 1
+    assert generated[0].media_type == "image"
+
+
+@pytest.mark.asyncio
+async def test_run_chat_saves_to_custom_media_dir(files_root: Path, settings, monkeypatch) -> None:
+    """`media_dir` explícito manda o download pra dentro da sandbox de
+    arquivos (mesmo mapeamento de `write_file`), em vez do destino padrão
+    (`Settings.resolved_media_dir()`, sob `config_dir`)."""
+
+    import meligpt.chat.service as service_module
+    import meligpt.clients.meligpt_http as client_module
+
+    monkeypatch.setattr(
+        client_module.MeliGPTClient, "stream_chat", _fake_stream_with_generated_image
+    )
+
+    async def fake_download_media(settings_, credentials_, path, *, transport=None):
+        return b"FAKEPNGBYTES"
+
+    monkeypatch.setattr(service_module, "download_media", fake_download_media)
+
+    registry = build_default_registry()
+    events = [
+        e
+        async for e in run_chat(
+            prompt="gere uma imagem",
+            settings=settings,
+            registry=registry,
+            discovery_enabled=False,
+            media_dir="minhas-imagens",
+        )
+    ]
+
+    generated = [e for e in events if isinstance(e, GeneratedMedia)]
+    assert len(generated) == 1
+    expected = files_root / "minhas-imagens" / "image_abc123.png"
+    assert generated[0].virtual_path == str(expected)
+    assert expected.read_bytes() == b"FAKEPNGBYTES"
+
+    # não deve ter tocado no destino padrão
+    assert not settings.resolved_media_dir().exists()
+
+
+@pytest.mark.asyncio
+async def test_run_chat_custom_media_dir_absolute_path_in_full_access_mode(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Em modo de acesso total (`files_dir=/`), um `media_dir` absoluto
+    grava exatamente nesse caminho real — mesma semântica de `write_file`."""
+
+    from meligpt.config import Settings
+
+    target_dir = tmp_path / "onde-eu-quiser"
+    target_dir.mkdir()
+
+    settings = Settings(
+        config_dir=tmp_path / "config",
+        files_dir=Path("/"),
+        allow_full_filesystem_access=True,
+        secrets_path=tmp_path / "config" / "secrets.env",
+    )
+    save_credentials(
+        settings.resolved_secrets_path(), Credentials(access_token="tok", cookie_header="c=1")
+    )
+
+    import meligpt.chat.service as service_module
+    import meligpt.clients.meligpt_http as client_module
+
+    monkeypatch.setattr(
+        client_module.MeliGPTClient, "stream_chat", _fake_stream_with_generated_image
+    )
+
+    async def fake_download_media(settings_, credentials_, path, *, transport=None):
+        return b"FAKEPNGBYTES"
+
+    monkeypatch.setattr(service_module, "download_media", fake_download_media)
+
+    registry = build_default_registry()
+    events = [
+        e
+        async for e in run_chat(
+            prompt="gere uma imagem",
+            settings=settings,
+            registry=registry,
+            discovery_enabled=False,
+            media_dir=str(target_dir),
+        )
+    ]
+
+    generated = [e for e in events if isinstance(e, GeneratedMedia)]
+    assert len(generated) == 1
+    saved_path = target_dir / "image_abc123.png"
+    assert saved_path.read_bytes() == b"FAKEPNGBYTES"
