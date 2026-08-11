@@ -256,20 +256,13 @@ def build_openai_router(
         # default do OpenClaude) e não necessariamente um id do catálogo —
         # só troca de modelo/rota quando ele bate com uma entrada real,
         # preservando o comportamento padrão (Settings.model) caso
-        # contrário.
+        # contrário. Modelos de qualquer tipo (chat/image/video) são
+        # aceitos aqui: o OpenClaude (e qualquer outro cliente
+        # OpenAI-compatible) só fala com este endpoint, então bloquear
+        # vídeo/imagem aqui os deixaria inacessíveis na prática — a
+        # resposta (texto ou mídia baixada via meligpt.media) é tratada
+        # igual independente do tipo do modelo selecionado.
         model_info = await catalog.get(body.model)
-        if model_info is not None and model_info.type != "chat":
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "success": False,
-                    "error": (
-                        f"modelo {model_info.id!r} é do tipo {model_info.type!r}, "
-                        "não suportado em /v1/chat/completions"
-                    ),
-                    "code": "model_type_not_supported",
-                },
-            )
 
         file_context = await _build_directory_snapshot(settings)
         prompt = _build_transcript_prompt(body.messages, file_context=file_context)

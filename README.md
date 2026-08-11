@@ -205,12 +205,14 @@ Rotas HTTP via API:
   contrário preserva o comportamento padrão (`Settings.model` /
   `resolved_endpoint()`) — então clientes como o OpenClaude, que sempre
   mandam um rótulo genérico (`"meligpt"`), continuam funcionando sem
-  mudança nenhuma. Modelos do tipo `image`/`video` são rejeitados com
-  `400 model_type_not_supported` neste endpoint.
+  mudança nenhuma. Aceita modelos de qualquer tipo (chat/image/video) —
+  é o único endpoint que clientes OpenAI-compatible como o OpenClaude
+  falam, então bloquear por tipo os deixaria inacessíveis na prática.
 
 Sem `MELIGPT_MODELS_URL` configurado (não há evidência de HAR para uma
 URL de catálogo remoto real — fica puramente opcional), o servidor usa um
-catálogo local fixo com os 8 modelos confirmados manualmente. Ver
+catálogo local fixo com os 12 modelos confirmados/inferidos manualmente
+(8 de chat + 4 de vídeo — ver seção "Modelos de vídeo" abaixo). Ver
 `.env.example` para `MELIGPT_MODELS_URL` / `MELIGPT_MODELS_CACHE_SECONDS`.
 
 **Memória de conversa:** o MeliGPT não expõe `conversationId` persistente
@@ -344,15 +346,13 @@ requisição usando eles:
 meligpt chat --model sora-2 "gere um vídeo de um gato correndo"
 ```
 
+No OpenClaude, `/model` (ou o seletor equivalente) troca o modelo pra
+`sora-2`/`veo-3.1-generate`/etc., e o pedido de vídeo funciona pelo
+`/v1/chat/completions` normalmente (ver "Rotas HTTP via API" acima).
+
 Se o id não bater com o que o MeliGPT espera de verdade (erro do
 servidor), o único lugar que precisa mudar é `_VIDEO_MODELS` em
 `src/meligpt/catalog.py` — troque a string do id pela correta.
-
-Esses modelos só funcionam via `meligpt chat` / `POST /v1/chat` — o
-endpoint compatível com OpenAI (`/v1/chat/completions`, usado pelo
-OpenClaude) rejeita modelos que não sejam de chat com
-`400 model_type_not_supported`, já que não faz sentido selecionar um
-modelo só-de-vídeo para uma conversa de código.
 
 ## Testes
 
