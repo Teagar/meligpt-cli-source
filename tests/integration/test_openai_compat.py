@@ -50,8 +50,8 @@ def test_openai_models_list(client: TestClient) -> None:
 def test_openai_models_list_filters_by_provider(client: TestClient) -> None:
     response = client.get("/v1/models", params={"provider": "google"})
     assert response.status_code == 200
-    ids = [m["id"] for m in response.json()["data"]]
-    assert ids == ["gemini-3.6-flash"]
+    ids = {m["id"] for m in response.json()["data"]}
+    assert ids == {"gemini-3.6-flash", "veo-3.1-generate", "veo-3.1-fast-generate"}
 
 
 def test_openai_models_list_filters_by_endpoint(client: TestClient) -> None:
@@ -83,8 +83,14 @@ def test_openai_list_providers(client: TestClient) -> None:
     assert providers["bedrock"] == "/api/ask/generic"
 
 
-def test_openai_chat_completions_rejects_non_chat_model(client: TestClient, monkeypatch) -> None:
+def test_openai_chat_completions_accepts_non_chat_model(client: TestClient, monkeypatch) -> None:
+    """Regressão do bug reportado via OpenClaude em 2026-08-10: modelos
+    de vídeo/imagem PRECISAM funcionar aqui, porque `/v1/chat/completions`
+    é o único endpoint que clientes OpenAI-compatible (OpenClaude) falam
+    — bloquear por tipo os deixava inacessíveis na prática."""
+
     import meligpt.api.openai_compat as openai_compat_module
+    import meligpt.clients.meligpt_http as client_module
     from meligpt.catalog import ModelInfo
 
     image_model = ModelInfo(
@@ -99,14 +105,72 @@ def test_openai_chat_completions_rejects_non_chat_model(client: TestClient, monk
     async def fake_get(self, model_id):
         return image_model if model_id == "image-gen-1" else None
 
+    async def fake_stream(self, *, prompt, message_id, credentials, model_info=None):
+        yield {
+            "event": "on_message_delta",
+            "data": {"delta": {"content": [{"type": "text", "text": "ok"}]}},
+        }
+
     monkeypatch.setattr(openai_compat_module.ModelCatalog, "get", fake_get)
+    monkeypatch.setattr(client_module.MeliGPTClient, "stream_chat", fake_stream)
 
     response = client.post(
         "/v1/chat/completions",
         json={"model": "image-gen-1", "messages": [{"role": "user", "content": "oi"}]},
     )
-    assert response.status_code == 400
-    assert response.json()["code"] == "model_type_not_supported"
+    assert response.status_code == 200
+
+
+def test_openai_chat_completions_generates_video_end_to_end(
+    client: TestClient, settings, monkeypatch
+) -> None:
+    """Reprodução exata do fluxo reportado: OpenClaude com `/model sora-2`
+    pedindo um vídeo via `/v1/chat/completions`."""
+
+    import meligpt.chat.service as service_module
+    import meligpt.clients.meligpt_http as client_module
+
+    captured: dict = {}
+
+    async def fake_stream(self, *, prompt, message_id, credentials, model_info=None):
+        captured["model_info"] = model_info
+        yield {
+            "event": "on_message_delta",
+            "data": {
+                "delta": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "pronto: /api/media/u1/video_goku_vs_naruto.mp4",
+                        }
+                    ]
+                }
+            },
+        }
+
+    async def fake_download_media(settings_, credentials_, path, *, transport=None):
+        return b"VIDEOBYTES"
+
+    monkeypatch.setattr(client_module.MeliGPTClient, "stream_chat", fake_stream)
+    monkeypatch.setattr(service_module, "download_media", fake_download_media)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "sora-2",
+            "messages": [
+                {"role": "user", "content": "Crie um video com audio do goku vs o naruto"}
+            ],
+        },
+    )
+    assert response.status_code == 200
+    assert captured["model_info"].id == "sora-2"
+    content = response.json()["choices"][0]["message"]["content"]
+    assert "![vídeo gerado]" in content
+    assert "video_goku_vs_naruto.mp4" in content
+
+    saved = settings.resolved_media_dir() / "video_goku_vs_naruto.mp4"
+    assert saved.read_bytes() == b"VIDEOBYTES"
 
 
 def test_openai_chat_completions_selects_model_route(client: TestClient, monkeypatch) -> None:

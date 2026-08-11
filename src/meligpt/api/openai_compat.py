@@ -49,7 +49,7 @@ from starlette.responses import JSONResponse
 from meligpt.catalog import ModelCatalog
 from meligpt.chat.service import (
     ChatFinished,
-    GeneratedImage,
+    GeneratedMedia,
     MirroredToolResult,
     TextChunk,
     WarningMessage,
@@ -71,6 +71,10 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
+    media_dir: str | None = None
+    """Extensão fora do padrão OpenAI: onde salvar imagens/vídeos gerados
+    neste turno. Clientes que não conhecem o campo simplesmente não o
+    mandam — sem isso, usa o destino padrão."""
 
 
 def _build_transcript_prompt(
@@ -252,20 +256,13 @@ def build_openai_router(
         # default do OpenClaude) e não necessariamente um id do catálogo —
         # só troca de modelo/rota quando ele bate com uma entrada real,
         # preservando o comportamento padrão (Settings.model) caso
-        # contrário.
+        # contrário. Modelos de qualquer tipo (chat/image/video) são
+        # aceitos aqui: o OpenClaude (e qualquer outro cliente
+        # OpenAI-compatible) só fala com este endpoint, então bloquear
+        # vídeo/imagem aqui os deixaria inacessíveis na prática — a
+        # resposta (texto ou mídia baixada via meligpt.media) é tratada
+        # igual independente do tipo do modelo selecionado.
         model_info = await catalog.get(body.model)
-        if model_info is not None and model_info.type != "chat":
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "success": False,
-                    "error": (
-                        f"modelo {model_info.id!r} é do tipo {model_info.type!r}, "
-                        "não suportado em /v1/chat/completions"
-                    ),
-                    "code": "model_type_not_supported",
-                },
-            )
 
         file_context = await _build_directory_snapshot(settings)
         prompt = _build_transcript_prompt(body.messages, file_context=file_context)
@@ -281,13 +278,15 @@ def build_openai_router(
                     discovery_enabled=False,
                     auto_files=True,
                     model_info=model_info,
+                    media_dir=body.media_dir,
                 ):
                     if isinstance(event, TextChunk):
                         parts.append(event.text)
                     elif isinstance(event, MirroredToolResult):
                         parts.append(f"\n[{event.name}] {event.message}\n")
-                    elif isinstance(event, GeneratedImage):
-                        parts.append(f"\n![imagem gerada]({event.virtual_path})\n")
+                    elif isinstance(event, GeneratedMedia):
+                        label = "vídeo gerado" if event.media_type == "video" else "imagem gerada"
+                        parts.append(f"\n![{label}]({event.virtual_path})\n")
                     elif isinstance(event, WarningMessage):
                         parts.append(f"\n[aviso] {event.message}\n")
             except MeliGPTError as exc:
@@ -325,13 +324,15 @@ def build_openai_router(
                     discovery_enabled=False,
                     auto_files=True,
                     model_info=model_info,
+                    media_dir=body.media_dir,
                 ):
                     if isinstance(event, TextChunk):
                         text = event.text
                     elif isinstance(event, MirroredToolResult):
                         text = f"\n[{event.name}] {event.message}\n"
-                    elif isinstance(event, GeneratedImage):
-                        text = f"\n![imagem gerada]({event.virtual_path})\n"
+                    elif isinstance(event, GeneratedMedia):
+                        label = "vídeo gerado" if event.media_type == "video" else "imagem gerada"
+                        text = f"\n![{label}]({event.virtual_path})\n"
                     elif isinstance(event, WarningMessage):
                         text = f"\n[aviso] {event.message}\n"
                     elif isinstance(event, ChatFinished):

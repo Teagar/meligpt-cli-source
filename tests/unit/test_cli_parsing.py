@@ -44,6 +44,17 @@ def test_chat_with_model_and_endpoint_flags() -> None:
     assert args.message == ["oi"]
 
 
+def test_chat_with_media_dir_flag() -> None:
+    args = _parse(["chat", "--media-dir", "minhas-imagens", "gere um gato"])
+    assert args.media_dir == "minhas-imagens"
+    assert args.message == ["gere um gato"]
+
+
+def test_chat_without_media_dir_flag_defaults_to_none() -> None:
+    args = _parse(["chat", "oi"])
+    assert args.media_dir is None
+
+
 def test_no_args_defaults_to_chat_with_empty_message() -> None:
     args = _parse([])
     assert args.command == "chat"
