@@ -16,6 +16,10 @@ from typing import Any
 import httpx
 
 from meligpt.auth.secrets import Credentials
+<<<<<<< HEAD
+=======
+from meligpt.catalog import ModelInfo
+>>>>>>> origin/main
 from meligpt.config import Settings
 from meligpt.exceptions import (
     UpstreamError,
@@ -28,7 +32,18 @@ from meligpt.logging import get_logger, log_with_fields
 _logger = get_logger("clients.meligpt_http")
 
 
+<<<<<<< HEAD
 def _build_payload(prompt: str, message_id: str, model: str) -> dict[str, Any]:
+=======
+def _build_payload(
+    prompt: str,
+    message_id: str,
+    model: str,
+    *,
+    browsing: bool = False,
+    payload_endpoint: str = "openAI",
+) -> dict[str, Any]:
+>>>>>>> origin/main
     return {
         "text": prompt,
         "sender": "User",
@@ -37,14 +52,29 @@ def _build_payload(prompt: str, message_id: str, model: str) -> dict[str, Any]:
         "conversationId": None,
         "messageId": message_id,
         "error": False,
+<<<<<<< HEAD
         "browsing": False,
+=======
+        "browsing": browsing,
+>>>>>>> origin/main
         "tools": [],
         "parameters": {"timestamp": "non", "document": "simple-text"},
         "generation": "",
         "responseMessageId": None,
         "overrideParentMessageId": None,
+<<<<<<< HEAD
         "endpoint": "openAI",
         "model": model,
+=======
+        "endpoint": payload_endpoint,
+        "model": model,
+        # Confirmado por HAR real (requisição de vídeo, 2026-08-10):
+        # sempre presente no payload, mesmo com conteúdo vazio. Nossa
+        # implementação nunca mandava isso antes — pode ser exigido pelo
+        # backend para alguns modelos (ex.: geração de vídeo) mesmo que
+        # pareça inofensivo para os demais.
+        "examples": [{"input": {"content": ""}, "output": {"content": ""}}],
+>>>>>>> origin/main
         "key": "newer",
         "isContinued": False,
     }
@@ -81,10 +111,31 @@ class MeliGPTClient:
         )
 
     async def stream_chat(
+<<<<<<< HEAD
         self, *, prompt: str, message_id: str, credentials: Credentials
     ) -> AsyncIterator[dict[str, Any]]:
         """Envia a mensagem e produz eventos SSE já decodificados (JSON).
 
+=======
+        self,
+        *,
+        prompt: str,
+        message_id: str,
+        credentials: Credentials,
+        model_info: ModelInfo | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Envia a mensagem e produz eventos SSE já decodificados (JSON).
+
+        ``model_info``, quando informado (resolvido via
+        :func:`meligpt.catalog.resolve_model`), sobrescreve a rota HTTP
+        (``model_info.route``), o modelo (``model_info.id``) e o campo
+        ``endpoint`` do payload (``model_info.payload_endpoint``) — que
+        pode ser diferente da rota, ex.: Claude usa a rota
+        ``/api/ask/generic`` mas manda ``"endpoint": "bedrock"``. Sem
+        ``model_info``, preserva o comportamento padrão baseado em
+        ``Settings`` (``resolved_endpoint()`` / ``model`` / ``"openAI"``).
+
+>>>>>>> origin/main
         Levanta:
         - :class:`UpstreamHTTPError` (com ``status_code=401``) em token
           expirado — a recuperação/retry fica a cargo da camada de
@@ -96,9 +147,27 @@ class MeliGPTClient:
           transporte.
         """
 
+<<<<<<< HEAD
         endpoint = self._settings.resolved_endpoint()
         headers = _build_headers(self._settings, credentials)
         payload = _build_payload(prompt, message_id, self._settings.model)
+=======
+        endpoint = (
+            f"{self._settings.base_url}{model_info.route}"
+            if model_info
+            else self._settings.resolved_endpoint()
+        )
+        model = model_info.id if model_info else self._settings.model
+        payload_endpoint = model_info.payload_endpoint if model_info else "openAI"
+        headers = _build_headers(self._settings, credentials)
+        payload = _build_payload(
+            prompt,
+            message_id,
+            model,
+            browsing=self._settings.enable_browsing,
+            payload_endpoint=payload_endpoint,
+        )
+>>>>>>> origin/main
 
         try:
             async with httpx.AsyncClient(

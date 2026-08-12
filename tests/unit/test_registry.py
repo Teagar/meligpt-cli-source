@@ -39,6 +39,7 @@ def test_default_registry_has_all_eleven_public_names() -> None:
 
 
 @pytest.mark.asyncio
+<<<<<<< HEAD
 @pytest.mark.parametrize(
     "name",
     [
@@ -52,6 +53,9 @@ def test_default_registry_has_all_eleven_public_names() -> None:
         "ImageGeneration",
     ],
 )
+=======
+@pytest.mark.parametrize("name", ["parallel", "task", "ImageGeneration"])
+>>>>>>> origin/main
 async def test_stub_tools_report_not_implemented(name: str, settings) -> None:
     registry = build_default_registry()
     result = await registry.dispatch(name, {}, settings)
@@ -60,6 +64,32 @@ async def test_stub_tools_report_not_implemented(name: str, settings) -> None:
 
 
 @pytest.mark.asyncio
+<<<<<<< HEAD
+=======
+@pytest.mark.parametrize("name", ["edit_file", "glob", "grep", "write_todos", "WebSearch"])
+async def test_previously_stub_tools_now_have_real_implementations(name: str, settings) -> None:
+    """edit_file/glob/grep/write_todos deixaram de ser stub — chamadas
+    com argumentos ausentes devem falhar por validação de verdade
+    (`tool_validation_error`), nunca mais por `tool_not_implemented`.
+    """
+
+    registry = build_default_registry()
+    result = await registry.dispatch(name, {}, settings)
+    assert result["success"] is False
+    assert result["code"] != "tool_not_implemented"
+
+
+@pytest.mark.asyncio
+async def test_bash_registered_but_disabled_by_default(settings) -> None:
+    registry = build_default_registry()
+    assert "bash" in registry.names()
+    result = await registry.dispatch("bash", {"command": "echo oi"}, settings)
+    assert result["success"] is False
+    assert result["code"] == "tool_disabled"
+
+
+@pytest.mark.asyncio
+>>>>>>> origin/main
 async def test_dispatch_never_leaks_raw_exception(settings, monkeypatch) -> None:
     registry = ToolRegistry()
 

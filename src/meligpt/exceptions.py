@@ -25,6 +25,18 @@ class MeliGPTError(Exception):
         return {"success": False, "error": self.message, "code": self.code}
 
 
+<<<<<<< HEAD
+=======
+class UnsafeConfigurationError(MeliGPTError):
+    """Configuração perigosa exigindo confirmação explícita adicional.
+
+    Ex.: `MELIGPT_FILES_DIR=/` sem `MELIGPT_ALLOW_FULL_FILESYSTEM_ACCESS=true`.
+    """
+
+    code = "unsafe_configuration"
+
+
+>>>>>>> origin/main
 # --- Segurança de filesystem -----------------------------------------------
 
 
@@ -121,6 +133,20 @@ class ToolNotImplementedError(MeliGPTError):
     code = "tool_not_implemented"
 
 
+<<<<<<< HEAD
+=======
+class ToolDisabledError(MeliGPTError):
+    """Ferramenta implementada, mas desligada por configuração (opt-in).
+
+    Diferente de ``ToolNotImplementedError``: a ferramenta existe e
+    funciona, só está deliberadamente desligada por padrão (ex.: `bash`,
+    que dá execução de comando real).
+    """
+
+    code = "tool_disabled"
+
+
+>>>>>>> origin/main
 class RecursionLimitError(MeliGPTError):
     """Profundidade máxima de subagentes/paralelismo excedida."""
 
@@ -184,3 +210,41 @@ class UpstreamForbiddenError(UpstreamHTTPError):
 
 class UpstreamTimeoutError(UpstreamError):
     code = "upstream_timeout"
+<<<<<<< HEAD
+=======
+
+
+# --- Catálogo de modelos ------------------------------------------------------
+
+
+class ModelCatalogError(MeliGPTError):
+    code = "model_catalog_error"
+
+
+class ModelNotFoundError(ModelCatalogError):
+    code = "model_not_found"
+
+
+class ProviderNotFoundError(ModelCatalogError):
+    code = "provider_not_found"
+
+
+class ModelTypeNotSupportedError(ModelCatalogError):
+    """O modelo existe no catálogo, mas seu tipo (ex.: ``image``/``video``)
+    não é aceito no endpoint pedido (ex.: ``/v1/chat/completions``)."""
+
+    code = "model_type_not_supported"
+
+
+# --- Busca web ---------------------------------------------------------------
+
+
+class WebSearchError(MeliGPTError):
+    code = "web_search_error"
+
+
+class WebSearchNotConfiguredError(WebSearchError):
+    """Nenhuma chave de API foi configurada para o provedor de busca."""
+
+    code = "web_search_not_configured"
+>>>>>>> origin/main

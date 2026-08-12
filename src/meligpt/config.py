@@ -12,6 +12,13 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+<<<<<<< HEAD
+=======
+#: Nome da subpasta de `config_dir` onde imagens geradas são salvas por
+#: padrão (ver `Settings.resolved_media_dir` e `meligpt.media`).
+GENERATED_MEDIA_DIR_NAME = "generated-images"
+
+>>>>>>> origin/main
 
 class Settings(BaseSettings):
     """Configuração da aplicação, lida de variáveis de ambiente / .env."""
@@ -31,6 +38,29 @@ class Settings(BaseSettings):
     secrets_path: Path | None = None
     """Caminho do secrets.env. Default: config_dir/secrets.env."""
 
+<<<<<<< HEAD
+=======
+    media_dir: Path | None = None
+    """Onde imagens geradas (ver `meligpt.media`) são salvas. Default:
+    ``config_dir/generated-images`` — DELIBERADAMENTE independente de
+    `files_dir`: quando `files_dir=/` (modo acesso total), gravar sob a
+    raiz real do filesystem exigiria permissão de root e falharia (bug
+    real encontrado via teste end-to-end em 2026-08-10). `config_dir` já
+    é uma pasta própria do usuário, sempre gravável, então mídia gerada
+    fica lá independente do modo de acesso a arquivos configurado.
+    """
+
+    allow_full_filesystem_access: bool = False
+    """Confirmação explícita exigida quando `files_dir` resolve para a
+    raiz real do filesystem (`/`) — modo "passagem direta", só faz
+    sentido quando `meligpt serve` roda no MESMO dispositivo que o
+    cliente (ex.: OpenClaude local), e dá ao modelo remoto acesso de
+    leitura/escrita a tudo que o processo consegue enxergar. Sem esta
+    flag, o servidor recusa iniciar se `files_dir` for `/`. Ver
+    docs/architecture.md.
+    """
+
+>>>>>>> origin/main
     # --- Limites (mesmos nomes e defaults do Bash) -----------------------
     max_file_size: int = 1_048_576
     max_ls_results: int = 1000
@@ -61,6 +91,45 @@ class Settings(BaseSettings):
     write_timeout_seconds: float = 20.0
     pool_timeout_seconds: float = 20.0
 
+<<<<<<< HEAD
+=======
+    # --- Catálogo de modelos multi-provedor -------------------------------
+    models_url: str | None = None
+    """URL opcional de um catálogo remoto (JSON: lista de modelos, ou
+    ``{"models": [...]}``). Não há evidência de HAR para nenhum endereço
+    real — fica de propósito sem default, puramente configurável. Sem
+    isso (ou em caso de falha), usa o catálogo local (:data:`meligpt.catalog.FALLBACK_MODELS`).
+    """
+
+    models_cache_seconds: float = 300.0
+    """Por quanto tempo o catálogo remoto buscado fica em cache antes de
+    ser buscado de novo (fallback local nunca expira)."""
+
+    enable_browsing: bool = False
+    """Liga o campo nativo "browsing" do payload do MeliGPT (visto no HAR
+    como parte do payload padrão, sempre `false` no client original). Se
+    o backend do MeliGPT suportar esse plugin (aparenta ser LibreChat),
+    isso dá busca na web feita pelo próprio modelo remoto, sem precisar
+    de nenhum provedor local. Não verificado ao vivo — teste com cuidado.
+    """
+
+    # --- Busca web local (fallback, usada quando o modelo chama a
+    # ferramenta local `WebSearch` explicitamente) --------------------------
+    web_search_provider: str = "brave"
+    brave_api_key: str | None = None
+    web_search_max_results: int = 5
+
+    # --- Ferramenta bash (execução de comando de shell) ---------------------
+    # DESLIGADA por padrão: dá ao modelo remoto capacidade de executar
+    # comandos de verdade dentro deste container. Só ative se você confia
+    # no modelo/conta que está usando e entende que isso equivale a dar
+    # acesso de shell ao ambiente onde o meligpt-cli está rodando. Ver
+    # docs/tools.md antes de ligar.
+    enable_bash_tool: bool = False
+    bash_timeout_seconds: float = 30.0
+    bash_max_output_bytes: int = 200_000
+
+>>>>>>> origin/main
     # --- Refresh automático de token (POST /api/auth/refresh) -------------
     refresh_endpoint: str | None = None
     """Default: base_url + /api/auth/refresh."""
@@ -83,11 +152,34 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     def resolved_files_dir(self) -> Path:
+<<<<<<< HEAD
         return self.files_dir or (self.config_dir / "files")
+=======
+        path = self.files_dir or (self.config_dir / "files")
+        if str(path) == "/" and not self.allow_full_filesystem_access:
+            from meligpt.exceptions import UnsafeConfigurationError
+
+            raise UnsafeConfigurationError(
+                "MELIGPT_FILES_DIR=/ dá ao modelo remoto acesso de "
+                "leitura/escrita a todo o filesystem visível a este "
+                "processo. Isso só faz sentido quando `meligpt serve` "
+                "roda no MESMO dispositivo que o cliente (ex.: OpenClaude "
+                "local) e você entende o risco. Confirme explicitamente "
+                "com MELIGPT_ALLOW_FULL_FILESYSTEM_ACCESS=true — ver "
+                "docs/architecture.md."
+            )
+        return path
+>>>>>>> origin/main
 
     def resolved_secrets_path(self) -> Path:
         return self.secrets_path or (self.config_dir / "secrets.env")
 
+<<<<<<< HEAD
+=======
+    def resolved_media_dir(self) -> Path:
+        return self.media_dir or (self.config_dir / GENERATED_MEDIA_DIR_NAME)
+
+>>>>>>> origin/main
     def resolved_endpoint(self) -> str:
         return self.endpoint or f"{self.base_url}/api/ask/openAI"
 

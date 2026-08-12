@@ -22,6 +22,10 @@ from meligpt.exceptions import (
     ToolValidationError,
 )
 from meligpt.filesystem.security import resolve_secure
+<<<<<<< HEAD
+=======
+from meligpt.tools.files._common import extract_path
+>>>>>>> origin/main
 
 _SNIFF_BYTES = 8192
 
@@ -31,9 +35,17 @@ class ReadFileTool:
     description = "Lê o conteúdo textual de um arquivo dentro da raiz sandbox."
 
     async def execute(self, arguments: dict[str, Any], settings: Settings) -> dict[str, Any]:
+<<<<<<< HEAD
         virtual = arguments.get("file_path") or arguments.get("path")
         if not isinstance(virtual, str) or not virtual:
             raise ToolValidationError("file_path inválido")
+=======
+        virtual = extract_path(arguments)
+        if not virtual:
+            raise ToolValidationError(
+                f"file_path inválido (chaves recebidas: {sorted(arguments.keys())})"
+            )
+>>>>>>> origin/main
 
         offset = arguments.get("offset")
         limit = arguments.get("limit")

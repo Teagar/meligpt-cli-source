@@ -9,26 +9,62 @@ a mensagem de aviso para ferramentas não espelhadas.
 
 from __future__ import annotations
 
+<<<<<<< HEAD
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+=======
+import json
+import uuid
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from pathlib import Path
+>>>>>>> origin/main
 from typing import Any
 
 from meligpt.auth.secrets import Credentials
 from meligpt.auth.token_manager import HarPromptCallback, TokenManager
+<<<<<<< HEAD
 from meligpt.chat.events import TextDeltaEvent, ToolCallEvent
+=======
+from meligpt.catalog import ModelInfo
+from meligpt.chat.events import FinalTextEvent, TextDeltaEvent, ToolCallEvent
+>>>>>>> origin/main
 from meligpt.chat.prompt_builder import interpret_prompt
 from meligpt.clients.meligpt_http import MeliGPTClient
 from meligpt.config import Settings
 from meligpt.exceptions import MeliGPTError, RecoveryFailedError, UpstreamHTTPError
 from meligpt.filesystem import discovery
+<<<<<<< HEAD
 from meligpt.filesystem.context import build_local_context
 from meligpt.logging import get_logger, log_with_fields
+=======
+from meligpt.filesystem.atomic_io import atomic_write
+from meligpt.filesystem.context import build_local_context
+from meligpt.filesystem.security import resolve_secure
+from meligpt.logging import get_logger, log_with_fields
+from meligpt.media import download_media, extract_media_references
+>>>>>>> origin/main
 from meligpt.tools.registry import ToolRegistry
 
 _logger = get_logger("chat.service")
 
+<<<<<<< HEAD
 _MIRRORED_TOOLS = {"write_file", "read_file", "ls", "list_files"}
+=======
+_MIRRORED_TOOLS = {
+    "write_file",
+    "read_file",
+    "ls",
+    "list_files",
+    "edit_file",
+    "glob",
+    "grep",
+    "write_todos",
+    "WebSearch",
+    "bash",
+}
+>>>>>>> origin/main
 
 _CONTEXT_INSTRUCTION_TEMPLATE = """\
 INSTRUÇÃO DA CLI:
@@ -73,13 +109,58 @@ class MirroredToolResult:
     message: str
 
 
+<<<<<<< HEAD
+=======
+#: Extensões reconhecidas como vídeo (para classificar `GeneratedMedia.media_type`).
+#: A rota `/api/media/...` (confirmada por HAR só para imagens) não indica
+#: o tipo por si só — inferimos pela extensão do nome de arquivo.
+_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".m4v"}
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+
+
+@dataclass(frozen=True)
+class GeneratedMedia:
+    """Um arquivo de mídia (imagem ou vídeo) gerado pelo modelo remoto,
+    detectado em ``/api/media/...`` dentro do texto da resposta e
+    baixado/salvo localmente.
+
+    A rota confirmada por HAR só foi exercitada com imagens; vídeo é
+    suportado pela MESMA rota (``/api/media/{userId}/{filename}``,
+    reconhecida independente de extensão) partindo do princípio de que o
+    MeliGPT serve todo tipo de mídia gerada pelo mesmo mecanismo — não
+    confirmado por HAR especificamente para vídeo.
+    """
+
+    virtual_path: str
+    url: str
+    media_type: str
+    """``"image"``, ``"video"`` ou ``"other"`` — inferido pela extensão
+    do arquivo (ver ``_VIDEO_EXTENSIONS``/``_IMAGE_EXTENSIONS``)."""
+
+
+def _classify_media_type(filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix in _VIDEO_EXTENSIONS:
+        return "video"
+    if suffix in _IMAGE_EXTENSIONS:
+        return "image"
+    return "other"
+
+
+>>>>>>> origin/main
 @dataclass(frozen=True)
 class ChatFinished:
     full_text: str
     had_text: bool
 
 
+<<<<<<< HEAD
 ChatServiceEvent = TextChunk | InfoMessage | WarningMessage | MirroredToolResult | ChatFinished
+=======
+ChatServiceEvent = (
+    TextChunk | InfoMessage | WarningMessage | MirroredToolResult | GeneratedMedia | ChatFinished
+)
+>>>>>>> origin/main
 
 
 class AmbiguousDiscoveryError(MeliGPTError):
@@ -162,8 +243,22 @@ async def run_chat(
     interactive: bool = False,
     prompt_for_har: HarPromptCallback | None = None,
     credentials: Credentials | None = None,
+<<<<<<< HEAD
 ) -> AsyncIterator[ChatServiceEvent]:
     """Executa um turno completo de chat, produzindo eventos incrementais."""
+=======
+    model_info: ModelInfo | None = None,
+    media_dir: str | None = None,
+) -> AsyncIterator[ChatServiceEvent]:
+    """Executa um turno completo de chat, produzindo eventos incrementais.
+
+    ``media_dir``, quando informado, é um caminho virtual (mesma semântica
+    de ``write_file``: relativo a ``Settings.resolved_files_dir()``, e
+    mapeado 1:1 para o filesystem real em modo de acesso total) onde
+    imagens/vídeos gerados neste turno são salvos, substituindo o destino
+    padrão (``Settings.resolved_media_dir()``).
+    """
+>>>>>>> origin/main
 
     files = list(explicit_files or [])
     directories = list(explicit_directories or [])
@@ -220,7 +315,14 @@ async def run_chat(
     while True:
         try:
             async for sse_event in client.stream_chat(
+<<<<<<< HEAD
                 prompt=final_prompt, message_id=message_id, credentials=credentials
+=======
+                prompt=final_prompt,
+                message_id=message_id,
+                credentials=credentials,
+                **({"model_info": model_info} if model_info is not None else {}),
+>>>>>>> origin/main
             ):
                 from meligpt.chat.events import parse_sse_data
 
@@ -228,8 +330,37 @@ async def run_chat(
                 if isinstance(parsed, TextDeltaEvent):
                     full_text_parts.append(parsed.text)
                     yield TextChunk(parsed.text)
+<<<<<<< HEAD
                 elif isinstance(parsed, ToolCallEvent):
                     key = parsed.id or f"fallback:{parsed.index}:{parsed.name}"
+=======
+                elif isinstance(parsed, FinalTextEvent):
+                    if not full_text_parts:
+                        # Só usa o texto final/completo quando nenhum delta
+                        # chegou antes — evita duplicar a resposta quando o
+                        # backend manda os dois (streaming por delta E um
+                        # resumo final em `responseMessage`).
+                        full_text_parts.append(parsed.text)
+                        yield TextChunk(parsed.text)
+                elif isinstance(parsed, ToolCallEvent):
+                    key = parsed.id or f"fallback:{parsed.index}:{parsed.name}"
+                    existing = tool_calls.get(key)
+                    if (
+                        existing is not None
+                        and not _has_arguments(parsed.arguments)
+                        and _has_arguments(existing.arguments)
+                    ):
+                        # O MeliGPT emite `on_run_step_completed` MAIS DE UMA VEZ
+                        # para a mesma tool call: a primeira ocorrência traz
+                        # `args` completo, e uma segunda ocorrência de
+                        # "fechamento" chega sem esse campo. Sem esta checagem,
+                        # a segunda sobrescreve a primeira com argumentos vazios
+                        # e toda ferramenta espelhada falha com "argumento
+                        # inválido" mesmo o modelo remoto tendo mandado tudo
+                        # certo (confirmado via HAR real, evento duplicado com
+                        # o mesmo tool_call id).
+                        continue
+>>>>>>> origin/main
                     tool_calls[key] = parsed
             break
         except UpstreamHTTPError as exc:
@@ -249,17 +380,109 @@ async def run_chat(
         yield mirrored_event
 
     full_text = "".join(full_text_parts)
+<<<<<<< HEAD
     yield ChatFinished(full_text=full_text, had_text=bool(full_text))
 
 
+=======
+
+    async for media_event in _download_generated_media(
+        full_text, settings, credentials, media_dir=media_dir
+    ):
+        yield media_event
+
+    yield ChatFinished(full_text=full_text, had_text=bool(full_text))
+
+
+async def _download_generated_media(
+    full_text: str,
+    settings: Settings,
+    credentials: Credentials,
+    *,
+    media_dir: str | None = None,
+) -> AsyncIterator[ChatServiceEvent]:
+    """Baixa e salva localmente qualquer imagem/vídeo gerado referenciado
+    no texto final da resposta (ver :mod:`meligpt.media`).
+
+    Falha de download de UM arquivo vira um ``WarningMessage`` — nunca
+    derruba o resto do turno (o texto da resposta já foi entregue).
+
+    Sem ``media_dir``, salva em ``Settings.resolved_media_dir()``
+    (independente de ``files_dir`` — ver docstring lá). Com ``media_dir``
+    (caminho virtual explícito pedido pelo usuário), salva relativo a
+    ``Settings.resolved_files_dir()`` — mesma sandbox/mapeamento real
+    usada por ``write_file``, então em modo de acesso total isso grava
+    exatamente onde o caminho apontar no filesystem real.
+    """
+
+    references = extract_media_references(full_text, base_url=settings.base_url)
+    if not references:
+        return
+
+    if media_dir:
+        root = settings.resolved_files_dir()
+        relative_prefix = media_dir.strip("/")
+    else:
+        root = settings.resolved_media_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        relative_prefix = ""
+
+    for ref in references:
+        try:
+            content = await download_media(settings, credentials, ref.path)
+        except MeliGPTError as exc:
+            yield WarningMessage(f"falha ao baixar mídia gerada ({ref.path}): {exc}")
+            continue
+
+        relative = f"{relative_prefix}/{ref.filename}" if relative_prefix else ref.filename
+
+        try:
+            with resolve_secure(
+                root,
+                relative,
+                allow_missing_final=True,
+                create_missing_dirs=True,
+            ) as target:
+                atomic_write(target.parent_fd, target.name, content)
+                physical_path = target.physical_path
+        except MeliGPTError as exc:
+            yield WarningMessage(f"falha ao salvar mídia gerada ({ref.filename}): {exc}")
+            continue
+
+        yield GeneratedMedia(
+            virtual_path=str(physical_path),
+            url=f"{settings.base_url}{ref.path}",
+            media_type=_classify_media_type(ref.filename),
+        )
+
+
+>>>>>>> origin/main
 async def _replay_tool_calls(
     tool_calls: dict[str, ToolCallEvent], registry: ToolRegistry, settings: Settings
 ) -> AsyncIterator[ChatServiceEvent]:
     for call in tool_calls.values():
         if call.name in _MIRRORED_TOOLS:
+<<<<<<< HEAD
             arguments = call.arguments if isinstance(call.arguments, dict) else {}
             result = await registry.dispatch(call.name, arguments, settings)
             message = _summarize_tool_result(result)
+=======
+            arguments = _coerce_arguments(call.arguments)
+            result = await registry.dispatch(call.name, arguments, settings)
+            message = _summarize_tool_result(result)
+            if not result.get("success"):
+                # Diagnóstico: sem acesso ao backend real do MeliGPT, não dá
+                # para saber de antemão o formato exato de `arguments` que o
+                # modelo remoto manda. Em vez de só falhar em silêncio,
+                # mostramos o que foi recebido (bruto e já coagido) direto
+                # na resposta — isso é o que permite corrigir o parsing na
+                # próxima rodada em vez de ficar adivinhando.
+                message = (
+                    f"{message}\n"
+                    f"  args brutos: {_truncate(repr(call.arguments))}\n"
+                    f"  args interpretados: {_truncate(repr(arguments))}"
+                )
+>>>>>>> origin/main
             yield MirroredToolResult(
                 name=call.name, success=bool(result.get("success")), message=message
             )
@@ -267,6 +490,45 @@ async def _replay_tool_calls(
             yield WarningMessage(f"ferramenta não espelhada: {call.name}")
 
 
+<<<<<<< HEAD
+=======
+def _has_arguments(raw: dict[str, Any] | str | None) -> bool:
+    if isinstance(raw, dict):
+        return bool(raw)
+    if isinstance(raw, str):
+        return bool(raw.strip())
+    return False
+
+
+def _truncate(text: str, limit: int = 400) -> str:
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _coerce_arguments(raw: dict[str, Any] | str | None) -> dict[str, Any]:
+    """Normaliza os argumentos de uma tool call.
+
+    Algumas variantes de API (estilo "Assistants") mandam ``arguments``
+    como uma STRING JSON em vez de um objeto já parseado — se não
+    tentarmos decodificar isso, os argumentos somem silenciosamente e
+    toda ferramenta espelhada falha com "argumento inválido" mesmo o
+    modelo remoto tendo enviado tudo certo. Também tenta desembrulhar
+    formas aninhadas comuns (``{"input": {...}}``, ``{"parameters": {...}}``)
+    caso o objeto de nível mais alto não pareça ter as chaves esperadas.
+    """
+
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+>>>>>>> origin/main
 def _summarize_tool_result(result: dict[str, Any]) -> str:
     if result.get("success"):
         if "content" in result:
@@ -277,5 +539,18 @@ def _summarize_tool_result(result: dict[str, Any]) -> str:
                 for e in result["entries"]
             ]
             return "\n".join(lines)
+<<<<<<< HEAD
+=======
+        if "matches" in result and result.get("pattern") is not None:
+            matches = result["matches"]
+            if matches and isinstance(matches[0], dict):
+                lines = [f"{m['path']}:{m['line']}: {m['text']}" for m in matches]
+            else:
+                lines = [str(m) for m in matches]
+            return "\n".join(lines) if lines else "(nenhum resultado)"
+        if "results" in result and result.get("query") is not None:
+            lines = [f"{r['title']} — {r['url']}\n  {r['snippet']}" for r in result["results"]]
+            return "\n".join(lines) if lines else "(nenhum resultado)"
+>>>>>>> origin/main
         return "concluído"
     return str(result.get("error", "falha desconhecida"))

@@ -20,8 +20,15 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.responses import JSONResponse
 
 from meligpt.api.schemas import ChatRequest, HealthResponse
+<<<<<<< HEAD
 from meligpt.chat.service import (
     ChatFinished,
+=======
+from meligpt.catalog import ModelCatalog, resolve_model
+from meligpt.chat.service import (
+    ChatFinished,
+    GeneratedMedia,
+>>>>>>> origin/main
     InfoMessage,
     MirroredToolResult,
     TextChunk,
@@ -62,6 +69,7 @@ async def manual_refresh():
     return {"success": True, "message": "token renovado"}
 
 
+<<<<<<< HEAD
 def build_chat_router(settings: Settings, registry: ToolRegistry) -> APIRouter:
     local_router = APIRouter()
 
@@ -69,6 +77,29 @@ def build_chat_router(settings: Settings, registry: ToolRegistry) -> APIRouter:
     async def chat(request: Request, body: ChatRequest) -> EventSourceResponse:
         request_id = new_request_id()
 
+=======
+def build_chat_router(
+    settings: Settings, registry: ToolRegistry, catalog: ModelCatalog | None = None
+) -> APIRouter:
+    local_router = APIRouter()
+    catalog = catalog or ModelCatalog(settings)
+
+    @local_router.post("/v1/chat", response_model=None)
+    async def chat(request: Request, body: ChatRequest) -> EventSourceResponse | JSONResponse:
+        request_id = new_request_id()
+
+        try:
+            # require_type=None: `/v1/chat` aceita modelos de vídeo/imagem
+            # também — diferente de `/v1/chat/completions`, que restringe a
+            # "chat" (ver openai_compat.py) por ser voltado a assistentes de
+            # código conversando em texto.
+            model_info = await resolve_model(
+                catalog, model_id=body.model, provider=body.endpoint, require_type=None
+            )
+        except MeliGPTError as exc:
+            return JSONResponse(status_code=400, content=exc.to_dict())
+
+>>>>>>> origin/main
         async def event_generator():
             try:
                 async for event in run_chat(
@@ -81,6 +112,11 @@ def build_chat_router(settings: Settings, registry: ToolRegistry) -> APIRouter:
                     discovery_enabled=body.discovery_enabled,
                     interactive=False,
                     prompt_for_har=None,
+<<<<<<< HEAD
+=======
+                    model_info=model_info,
+                    media_dir=body.media_dir,
+>>>>>>> origin/main
                 ):
                     if await request.is_disconnected():
                         log_with_fields(
@@ -105,6 +141,20 @@ def build_chat_router(settings: Settings, registry: ToolRegistry) -> APIRouter:
                                 }
                             ),
                         }
+<<<<<<< HEAD
+=======
+                    elif isinstance(event, GeneratedMedia):
+                        yield {
+                            "event": "generated_media",
+                            "data": json.dumps(
+                                {
+                                    "virtual_path": event.virtual_path,
+                                    "url": event.url,
+                                    "media_type": event.media_type,
+                                }
+                            ),
+                        }
+>>>>>>> origin/main
                     elif isinstance(event, ChatFinished):
                         yield {
                             "event": "done",

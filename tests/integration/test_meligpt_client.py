@@ -113,3 +113,59 @@ async def test_credentials_never_appear_in_error_message(settings, monkeypatch) 
 
     assert "SUPER_SECRETO" not in str(exc_info.value)
     assert "COOKIE_SECRETO" not in str(exc_info.value)
+<<<<<<< HEAD
+=======
+
+
+@pytest.mark.asyncio
+async def test_model_info_overrides_route_model_and_payload_endpoint(settings) -> None:
+    import json as json_module
+
+    from meligpt.catalog import FALLBACK_MODELS
+
+    claude = next(m for m in FALLBACK_MODELS if m.id == "claude-5-sonnet")
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["payload"] = json_module.loads(request.content)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=b"data: [DONE]\n",
+        )
+
+    client = MeliGPTClient(settings, transport=httpx.MockTransport(handler))
+    async for _ in client.stream_chat(
+        prompt="oi", message_id="m1", credentials=CREDS, model_info=claude
+    ):
+        pass
+
+    assert captured["path"] == "/api/ask/generic"
+    assert captured["payload"]["model"] == "claude-5-sonnet"
+    assert captured["payload"]["endpoint"] == "bedrock"
+
+
+@pytest.mark.asyncio
+async def test_without_model_info_uses_default_settings(settings) -> None:
+    import json as json_module
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["payload"] = json_module.loads(request.content)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=b"data: [DONE]\n",
+        )
+
+    client = MeliGPTClient(settings, transport=httpx.MockTransport(handler))
+    async for _ in client.stream_chat(prompt="oi", message_id="m1", credentials=CREDS):
+        pass
+
+    assert captured["path"] == "/api/ask/openAI"
+    assert captured["payload"]["model"] == settings.model
+    assert captured["payload"]["endpoint"] == "openAI"
+>>>>>>> origin/main

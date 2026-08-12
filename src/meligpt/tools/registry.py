@@ -62,6 +62,7 @@ class ToolRegistry:
 def build_default_registry() -> ToolRegistry:
     """Constrói o registro com todas as ferramentas conhecidas.
 
+<<<<<<< HEAD
     Ferramentas reais (Fase A, com contraparte no Bash original) e
     ferramentas stub (Fase B, sem provedor real — ver
     ``docs/tools.md``) convivem no mesmo registro, mas as stubs sempre
@@ -79,12 +80,37 @@ def build_default_registry() -> ToolRegistry:
     from meligpt.tools.stubs.task import TaskStub
     from meligpt.tools.stubs.web_search import WebSearchStub
     from meligpt.tools.stubs.write_todos import WriteTodosStub
+=======
+    `ls`, `read_file`, `write_file` (Fase A, com contraparte no Bash
+    original) e `edit_file`, `glob`, `grep`, `write_todos`, `WebSearch`,
+    `bash` (implementadas de verdade — ver ``docs/tools.md``) convivem
+    com `parallel`, `task`, `ImageGeneration`, que continuam stubs por
+    dependerem de orquestração de subagentes ou provedor externo não
+    configurado. `bash` é a única ferramenta desligada por padrão via
+    configuração (`MELIGPT_ENABLE_BASH_TOOL`), não por falta de
+    implementação.
+    """
+
+    from meligpt.tools.files.edit_file import EditFileTool
+    from meligpt.tools.files.glob import GlobTool
+    from meligpt.tools.files.grep import GrepTool
+    from meligpt.tools.files.ls import LsTool
+    from meligpt.tools.files.read_file import ReadFileTool
+    from meligpt.tools.files.write_file import WriteFileTool
+    from meligpt.tools.orchestration.write_todos import WriteTodosTool
+    from meligpt.tools.research.web_search import WebSearchTool
+    from meligpt.tools.stubs.image_generation import ImageGenerationStub
+    from meligpt.tools.stubs.parallel import ParallelStub
+    from meligpt.tools.stubs.task import TaskStub
+    from meligpt.tools.system.bash import BashTool
+>>>>>>> origin/main
 
     registry = ToolRegistry()
     for tool in (
         LsTool(),
         ReadFileTool(),
         WriteFileTool(),
+<<<<<<< HEAD
         EditFileStub(),
         GlobStub(),
         GrepStub(),
@@ -92,6 +118,16 @@ def build_default_registry() -> ToolRegistry:
         ParallelStub(),
         TaskStub(),
         WebSearchStub(),
+=======
+        EditFileTool(),
+        GlobTool(),
+        GrepTool(),
+        WriteTodosTool(),
+        WebSearchTool(),
+        BashTool(),
+        ParallelStub(),
+        TaskStub(),
+>>>>>>> origin/main
         ImageGenerationStub(),
     ):
         registry.register(tool)

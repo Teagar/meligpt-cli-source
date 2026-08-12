@@ -11,6 +11,10 @@ import sys
 
 from rich.console import Console
 from rich.markdown import Markdown
+<<<<<<< HEAD
+=======
+from rich.markup import escape
+>>>>>>> origin/main
 from rich.panel import Panel
 from rich.status import Status
 from rich.text import Text
@@ -20,6 +24,7 @@ _stderr = Console(stderr=True)
 
 
 def info(message: str) -> None:
+<<<<<<< HEAD
     _stderr.print(f"[dim]›[/dim] {message}")
 
 
@@ -29,16 +34,35 @@ def warning(message: str) -> None:
 
 def error(message: str) -> None:
     _stderr.print(f"[bold red]Erro:[/bold red] {message}")
+=======
+    _stderr.print(f"[dim]›[/dim] {escape(message)}")
+
+
+def warning(message: str) -> None:
+    _stderr.print(f"[yellow]⚠ {escape(message)}[/yellow]")
+
+
+def error(message: str) -> None:
+    _stderr.print(f"[bold red]Erro:[/bold red] {escape(message)}")
+>>>>>>> origin/main
 
 
 def tool_result(name: str, success: bool, message: str) -> None:
     icon = "[green]✓[/green]" if success else "[red]✗[/red]"
+<<<<<<< HEAD
     _stderr.print(f"{icon} [bold]{name}[/bold]")
+=======
+    _stderr.print(f"{icon} [bold]{escape(name)}[/bold]")
+>>>>>>> origin/main
     _stderr.print(Text(message, style="dim"), soft_wrap=True)
 
 
 def header(model: str) -> None:
+<<<<<<< HEAD
     _stderr.print(Panel.fit(f"MeliGPT CLI · [bold]{model}[/bold]", border_style="cyan"))
+=======
+    _stderr.print(Panel.fit(f"MeliGPT CLI · [bold]{escape(model)}[/bold]", border_style="cyan"))
+>>>>>>> origin/main
 
 
 def sending_status() -> Status:

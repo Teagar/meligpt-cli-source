@@ -1,0 +1,14 @@
+event: message
+data: {"message":{"messageId":"a903c3e4-a05d-4484-aded-108fdeec71ab","parentMessageId":"00000000-0000-0000-0000-000000000000","conversationId":"c5d68fd0-9a08-4a18-82b2-17204daddb2c","sender":"User","text":"Crie um video de uma bola quicando","isCreatedByUser":true,"projectId":null},"created":true}
+
+: ping
+
+: ping
+
+: ping
+
+: ping
+
+event: message
+data: {"final":true,"conversation":{"_id":"c5d68fd0-9a08-4a18-82b2-17204daddb2c","conversationId":"c5d68fd0-9a08-4a18-82b2-17204daddb2c","createdAt":"2026-08-11T07:16:10.714Z","endpoint":"google","isProjectConvo":false,"messages":["a903c3e4-a05d-4484-aded-108fdeec71ab","7714e707-7769-44de-b730-40430b43baa8"],"model":"veo-3.1-generate-001","projectId":null,"resendFiles":true,"tools":[],"updatedAt":"2026-08-11T07:18:33.905Z","user":"69a6d3ab29b848ccb550efbf","title":"New Chat"},"title":"New Chat","requestMessage":{"messageId":"a903c3e4-a05d-4484-aded-108fdeec71ab","parentMessageId":"00000000-0000-0000-0000-000000000000","conversationId":"c5d68fd0-9a08-4a18-82b2-17204daddb2c","sender":"User","text":"Crie um video de uma bola quicando","isCreatedByUser":true,"projectId":null},"responseMessage":{"messageId":"7714e707-7769-44de-b730-40430b43baa8","conversationId":"c5d68fd0-9a08-4a18-82b2-17204daddb2c","parentMessageId":"a903c3e4-a05d-4484-aded-108fdeec71ab","isCreatedByUser":false,"model":"veo-3.1-generate-001","sender":"IA","endpoint":"google","text":"<videoplayer url=\"/api/media/69a6d3ab29b848ccb550efbf/a8039ddd-6e9d-471f-b894-1562558a5553.mp4\"/>"}}
+

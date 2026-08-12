@@ -37,6 +37,10 @@ from meligpt.exceptions import (
     PathTraversalError,
     PermissionDeniedToolError,
     SymlinkNotAllowedError,
+<<<<<<< HEAD
+=======
+    ToolExecutionError,
+>>>>>>> origin/main
 )
 from meligpt.filesystem.paths import VirtualPath, parse_virtual_path
 
@@ -75,9 +79,43 @@ def _open_root_fd(root: Path) -> int:
         raise FileNotFoundToolError(f"raiz sandbox não encontrada: {root}") from exc
 
 
+<<<<<<< HEAD
 @contextmanager
 def resolve_secure(
     root: Path, virtual: str, *, allow_missing_final: bool = True
+=======
+def _create_missing_dir(parent_fd: int, name: str, virtual: str) -> os.stat_result:
+    """Cria ``name`` como diretório dentro de ``parent_fd`` se ainda não
+    existir (equivalente a um ``mkdir -p`` seguro, componente a
+    componente). Não segue symlinks: se algo aparecer no lugar entre a
+    tentativa de criação e o lstat seguinte (corrida), o restante do
+    laço em :func:`resolve_secure` trata isso normalmente (rejeita
+    symlink, rejeita não-diretório).
+    """
+
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass  # corrida: outra chamada já criou; segue para o lstat abaixo
+    except OSError as exc:
+        raise ToolExecutionError(
+            f"não foi possível criar diretório intermediário: {virtual}"
+        ) from exc
+
+    try:
+        return os.lstat(name, dir_fd=parent_fd)
+    except OSError as exc:
+        raise FileNotFoundToolError(f"caminho local não encontrado: {virtual}") from exc
+
+
+@contextmanager
+def resolve_secure(
+    root: Path,
+    virtual: str,
+    *,
+    allow_missing_final: bool = True,
+    create_missing_dirs: bool = False,
+>>>>>>> origin/main
 ) -> Iterator[ResolvedTarget]:
     """Resolve um caminho virtual com segurança e produz um ``ResolvedTarget``.
 
@@ -85,6 +123,19 @@ def resolve_secure(
     tentativas de escape, e diferencia ``FileNotFoundToolError`` de
     ``NotADirectoryToolError``/``PermissionDeniedToolError`` conforme a
     causa real.
+<<<<<<< HEAD
+=======
+
+    ``create_missing_dirs``: quando ``True``, componentes intermediários
+    ausentes são criados automaticamente (como ``mkdir -p``) em vez de
+    levantar ``FileNotFoundToolError``. Usado por ``write_file`` — o
+    modelo remoto frequentemente informa um caminho absoluto "de host"
+    (ex.: refletindo o cwd que o próprio cliente relatou) que, dentro da
+    nossa raiz virtual, corresponde a subdiretórios ainda não criados;
+    exigir que o usuário crie cada pasta manualmente antes de escrever um
+    arquivo não é o comportamento esperado de um `write_file` de agente
+    de código.
+>>>>>>> origin/main
     """
 
     vpath: VirtualPath = parse_virtual_path(virtual)
@@ -126,7 +177,16 @@ def resolve_secure(
                         is_symlink=False,
                     )
                     return
+<<<<<<< HEAD
                 raise FileNotFoundToolError(f"caminho local não encontrado: {virtual}") from None
+=======
+                if not is_last and create_missing_dirs:
+                    st = _create_missing_dir(current_fd, component, virtual)
+                else:
+                    raise FileNotFoundToolError(
+                        f"caminho local não encontrado: {virtual}"
+                    ) from None
+>>>>>>> origin/main
             except NotADirectoryError as exc:
                 raise NotADirectoryToolError(
                     f"componente do caminho não é um diretório: {virtual}"
