@@ -84,6 +84,26 @@ def test_serve_subcommand_unaffected() -> None:
     assert args.port == 9000
 
 
+def test_serve_with_here_flag() -> None:
+    args = _parse(["serve", "--here"])
+    assert args.command == "serve"
+    assert args.here is True
+    assert args.files_dir is None
+
+
+def test_serve_with_files_dir_flag() -> None:
+    args = _parse(["serve", "--files-dir", "/tmp/meu-projeto"])
+    assert args.command == "serve"
+    assert args.files_dir == "/tmp/meu-projeto"
+    assert args.here is False
+
+
+def test_serve_without_scope_flags_defaults_to_none() -> None:
+    args = _parse(["serve"])
+    assert args.files_dir is None
+    assert args.here is False
+
+
 def test_help_flag_is_not_rewritten() -> None:
     assert _normalize_argv(["--help"]) == ["--help"]
     assert _normalize_argv(["-h"]) == ["-h"]
