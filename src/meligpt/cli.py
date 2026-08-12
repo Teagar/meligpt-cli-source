@@ -82,6 +82,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_parser.add_argument("--host", default=None)
     serve_parser.add_argument("--port", type=int, default=None)
+    serve_parser.add_argument(
+        "--files-dir",
+        default=None,
+        help=(
+            "Restringe ls/read_file/write_file/edit_file/glob/grep a esta pasta "
+            "(sandbox com proteção contra path traversal — nunca sai daqui, mesmo "
+            "com '..' ou symlinks). Sobrepõe MELIGPT_FILES_DIR e desliga o modo de "
+            "acesso total, se estava ligado. ⚠️ bash NÃO é sandboxed da mesma forma "
+            "(só começa nesta pasta — ver aviso na documentação)."
+        ),
+    )
+    serve_parser.add_argument(
+        "--here",
+        action="store_true",
+        help="Atalho para '--files-dir <diretório atual>' — restringe a sessão à pasta onde você rodou este comando.",
+    )
 
     models_parser = subparsers.add_parser(
         "models", help="Lista o catálogo de modelos multi-provedor."
@@ -136,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
     if command == "providers":
         return asyncio.run(_run_providers_command(settings))
 
+    if command == "serve":
+        _apply_serve_scope(args, settings)
+
     try:
         settings.resolved_files_dir()  # falha rápido em configuração insegura (ex.: FILES_DIR=/)
     except MeliGPTError as exc:
@@ -145,6 +164,30 @@ def main(argv: list[str] | None = None) -> int:
     if command == "serve":
         return _run_serve(args, settings)
     return asyncio.run(_run_chat_command(args, settings))
+
+
+def _apply_serve_scope(args: argparse.Namespace, settings: Settings) -> None:
+    """Aplica `--files-dir`/`--here` de `meligpt serve` ANTES do
+    fail-fast check de `main()` — senão a validação rodaria em cima da
+    config antiga (ex.: `FILES_DIR=/` sem acesso total no .env) mesmo
+    quando o usuário está justamente sobrescrevendo isso na hora.
+    """
+
+    if args.here:
+        scoped_dir = Path.cwd()
+    elif args.files_dir:
+        scoped_dir = Path(args.files_dir).expanduser().resolve()
+    else:
+        return
+
+    settings.files_dir = scoped_dir
+    settings.allow_full_filesystem_access = False
+    console.info(f"Sandbox de arquivos restrito a: {scoped_dir}")
+    console.warning(
+        "bash começa nesta pasta, mas NÃO é limitado a ela (sem sandbox de "
+        "processo) — um comando pode navegar/referenciar caminhos fora dela. "
+        "Só ls/read_file/write_file/edit_file/glob/grep têm essa garantia."
+    )
 
 
 def _run_import_har(args: argparse.Namespace, settings: Settings) -> int:

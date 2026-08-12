@@ -145,11 +145,44 @@ uma chamada HTTP normal em `/v1/chat/completions`, indistinguível de uma
 mensagem digitada à mão, e a memória multi-turno (transcrição inteira
 reenviada a cada turno) já cobre isso.
 
-## Uso local com bash + filesystem real liberados
+## Restringir a uma pasta específica (recomendado)
+
+Se você quer que o modelo (via OpenClaude) só leia/altere arquivos
+dentro da pasta onde você está trabalhando — não o filesystem inteiro —
+use `--here` (ou `--files-dir`) ao subir o servidor:
+
+```bash
+cd /tmp/tmp.ojoi4343   # a pasta do seu projeto
+meligpt import-har seu-arquivo.har   # uma vez, para autenticar
+meligpt serve --here
+```
+
+Isso restringe `ls`/`read_file`/`write_file`/`edit_file`/`glob`/`grep`
+a essa pasta e subpastas — com a mesma proteção contra path traversal
+usada em todo o resto do projeto (`..`, symlinks pra fora, etc. são
+bloqueados, não só "escondidos"). Pra apontar pra uma pasta específica
+sem precisar `cd` até ela:
+
+```bash
+meligpt serve --files-dir /tmp/tmp.ojoi4343
+```
+
+Como o `meligpt serve` é um processo único e de vida longa, o escopo
+vale pra aquela execução inteira — pra trocar de projeto, pare o
+servidor (`Ctrl+C`) e suba de novo com `--here` na nova pasta.
+
+> ⚠️ **`bash` é a exceção**: ele começa nessa pasta (`cwd`), mas não é
+> limitado a ela do mesmo jeito — um comando pode fazer `cd ..` ou
+> referenciar um caminho absoluto fora do escopo, e vai funcionar. Não
+> existe sandbox de processo (container/chroot) por trás disso. Se
+> precisar de garantia real contra isso, rode `meligpt serve` dentro de
+> um container com bind mount só da pasta do projeto.
+
+## Acesso total ao filesystem (sem restrição)
 
 Se você quer que o modelo (via OpenClaude) execute comandos e crie/edite
-arquivos livremente na sua máquina — não num sandbox — use o preset
-`.env.full-access.example`:
+arquivos livremente na sua máquina inteira — não só numa pasta — use o
+preset `.env.full-access.example`:
 
 ```bash
 cp .env.full-access.example .env
@@ -171,8 +204,10 @@ conferir em 2 minutos se a config de acesso total (bash + filesystem real
 + catálogo de modelos) está correta antes de testar pelo OpenClaude.
 
 ⚠️ Isso dá ao modelo remoto acesso de shell e escrita irrestrita no seu
-filesystem real. Só faz sentido em máquina pessoal/dev — nunca num
-servidor compartilhado ou exposto à internet.
+filesystem real. Prefira a seção anterior (`--here`/`--files-dir`) a
+menos que você realmente precise disso — é estritamente mais arriscado,
+e só faz sentido em máquina pessoal/dev, nunca num servidor
+compartilhado ou exposto à internet.
 
 ## Catálogo de modelos multi-provedor
 
