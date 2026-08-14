@@ -357,6 +357,76 @@ def test_openai_chat_completions_resumes_conversation_incrementally(
     assert captured_calls[1]["parent_message_id"] == "msg-1"
 
 
+def test_openai_chat_completions_resumes_after_reformatted_history(
+    client: TestClient, monkeypatch
+) -> None:
+    """Regressão do `openclaude --continue`: ao recarregar uma conversa
+    salva, o OpenClaude reconstrói `system`/`assistant` do zero (system
+    prompt regenerado, anotações de tool call reformatadas) — só o texto
+    que o usuário digitou permanece idêntico. A sessão precisa continuar
+    sendo reconhecida mesmo assim.
+    """
+
+    import meligpt.clients.meligpt_http as client_module
+
+    captured_calls: list[dict] = []
+    turn = {"n": 0}
+
+    async def fake_stream(self, *, prompt, message_id, credentials, **kwargs):
+        turn["n"] += 1
+        captured_calls.append({"prompt": prompt, **kwargs})
+        yield {
+            "event": "message",
+            "data": {
+                "final": True,
+                "responseMessage": {
+                    "text": f"resposta {turn['n']}",
+                    "conversationId": "conv-continue",
+                    "messageId": f"msg-{turn['n']}",
+                },
+            },
+        }
+
+    monkeypatch.setattr(client_module.MeliGPTClient, "stream_chat", fake_stream)
+
+    first = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "meligpt",
+            "messages": [
+                {"role": "system", "content": "Você é um agente. Diretório: /home/user/proj"},
+                {"role": "user", "content": "primeira"},
+            ],
+        },
+    )
+    assert first.status_code == 200
+
+    # Simula o --continue: mesmo texto do usuário, mas system/assistant
+    # completamente diferentes do que teria sido gravado originalmente
+    # (o OpenClaude nunca ecoa de volta um `full_text` idêntico ao que
+    # recebeu — reformata anotações locais, tool calls, etc.).
+    second = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "meligpt",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Você é um agente. Diretório: /home/user/proj (recarregado)",
+                },
+                {"role": "user", "content": "primeira"},
+                {"role": "assistant", "content": "[resposta reformatada de forma diferente]"},
+                {"role": "user", "content": "segunda"},
+            ],
+        },
+    )
+    assert second.status_code == 200
+    assert len(captured_calls) == 2
+    assert captured_calls[1]["prompt"] == "segunda"
+    assert captured_calls[1]["conversation_id"] == "conv-continue"
+    assert captured_calls[1]["parent_message_id"] == "msg-1"
+
+
 def test_openai_chat_completions_video_generation_uses_only_latest_message_when_resuming(
     client: TestClient, monkeypatch
 ) -> None:
