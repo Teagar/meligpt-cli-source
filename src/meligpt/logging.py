@@ -56,13 +56,22 @@ class _ColorFormatter(_UvicornDefaultFormatter):
     lines, que era preciso mas ilegível de bater o olho no meio dos logs
     de acesso do servidor (que já usam exatamente esse formato).
 
-    Os campos estruturados (``log_with_fields``) continuam saindo, só que
-    como ``chave=valor`` no fim da linha em vez de um blob JSON — e ainda
-    passam por :func:`sanitize` antes de aparecer.
+    Os campos estruturados (``log_with_fields``) continuam saindo, como
+    ``chave: valor`` no fim da linha (em vez de um blob JSON) — e ainda
+    passam por :func:`sanitize` antes de aparecer. Campos cuja chave
+    termina em ``_id`` (``conversation_id``, ``response_message_id``,
+    etc.) saem sublinhados e sem ``=`` colado, pra ficar fácil de
+    selecionar só o valor com duplo-clique/arrastar no terminal.
     """
 
     def __init__(self) -> None:
         super().__init__(fmt="%(levelprefix)s %(name)s - %(message)s")
+
+    def _format_field(self, key: str, value: Any) -> str:
+        if key.endswith("_id"):
+            rendered = f"\033[4m{value}\033[0m" if self.use_colors else str(value)
+            return f"{key}: {rendered}"
+        return f"{key}={value}"
 
     def formatMessage(self, record: logging.LogRecord) -> str:
         line = super().formatMessage(record)
@@ -74,7 +83,7 @@ class _ColorFormatter(_UvicornDefaultFormatter):
         extra = getattr(record, "extra_fields", None)
         if extra:
             sanitized = sanitize(extra)
-            pairs = " ".join(f"{key}={value}" for key, value in sanitized.items())
+            pairs = " ".join(self._format_field(key, value) for key, value in sanitized.items())
             line = f"{line} ({pairs})"
 
         return line
