@@ -56,3 +56,63 @@ def test_clear_empties_store() -> None:
     store.remember("k1", SessionRecord("c1", "m1"))
     store.clear()
     assert len(store) == 0
+
+
+# --- _stable_user_text / _history_turns (api/openai_compat.py) --------
+#
+# Testados aqui (não em test_openai_compat.py) porque são funções puras
+# de normalização — mais fácil de testar isolado do endpoint HTTP.
+
+
+def test_stable_user_text_strips_system_reminder_block() -> None:
+    from meligpt.api.openai_compat import _stable_user_text
+
+    content = "Ola\n<system-reminder>snip_id=701tx1; sessão original</system-reminder>"
+    assert _stable_user_text(content) == "Ola"
+
+
+def test_stable_user_text_strips_available_deferred_tools_block() -> None:
+    from meligpt.api.openai_compat import _stable_user_text
+
+    content = (
+        "<available-deferred-tools>\nAskUserQuestion, WebSearch\n</available-deferred-tools>\n\n"
+        "Como você se chama?"
+    )
+    assert _stable_user_text(content) == "Como você se chama?"
+
+
+def test_stable_user_text_strips_multiple_blocks_regardless_of_position() -> None:
+    from meligpt.api.openai_compat import _stable_user_text
+
+    content = (
+        "<available-deferred-tools>A</available-deferred-tools>"
+        "meio\n<system-reminder>B</system-reminder>fim"
+    )
+    assert _stable_user_text(content) == "meio fim"
+
+
+def test_stable_user_text_ignores_content_beyond_snip_id_when_equal_after_stripping() -> None:
+    from meligpt.api.openai_compat import _stable_user_text
+
+    a = "Ola\n<system-reminder>snip_id=701tx1; sessão original</system-reminder>"
+    b = "Ola\n<system-reminder>snip_id=99zzq2; outro contexto totalmente diferente</system-reminder>"
+    assert _stable_user_text(a) == _stable_user_text(b) == "Ola"
+
+
+def test_stable_user_text_returns_empty_for_pure_wrapper_content() -> None:
+    from meligpt.api.openai_compat import _stable_user_text
+
+    content = "<available-deferred-tools>\nAskUserQuestion\n</available-deferred-tools>"
+    assert _stable_user_text(content) == ""
+
+
+def test_history_turns_skips_non_user_roles_and_empty_after_stripping() -> None:
+    from meligpt.api.openai_compat import ChatMessage, _history_turns
+
+    messages = [
+        ChatMessage(role="system", content="Você é um agente."),
+        ChatMessage(role="user", content="<system-reminder>x</system-reminder>"),
+        ChatMessage(role="assistant", content="oi"),
+        ChatMessage(role="user", content="pergunta real"),
+    ]
+    assert _history_turns(messages) == [("user", "pergunta real")]

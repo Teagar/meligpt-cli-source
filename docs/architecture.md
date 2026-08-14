@@ -92,6 +92,20 @@ A cada turno:
 Trade-off aceito: duas conversas diferentes com a MESMA sequência exata
 de mensagens do usuário colidiriam na mesma sessão (raro na prática).
 
+**Blocos efêmeros dentro das próprias mensagens `user`:** mesmo restrito
+a `user`, o hash inicialmente ainda não batia depois de um
+`openclaude --continue` real (confirmado por log, `--log-level debug`).
+Causa: o OpenClaude injeta blocos como `<system-reminder>...</system-reminder>`
+e `<available-deferred-tools>...</available-deferred-tools>` DENTRO do
+próprio conteúdo da mensagem `user` (não como `system` separado) — e o
+conteúdo desses blocos (`snip_id=...`, listas de ferramentas disponíveis
+no turno) é regenerado a cada retomada, mesmo pro mesmo texto humano.
+`_stable_user_text()` em `openai_compat.py` remove esses blocos (regex,
+lista de tags extensível em `_EPHEMERAL_WRAPPER_TAGS`) antes de calcular
+a chave — só o texto literal digitado entra no hash. O prompt de fato
+enviado ao MeliGPT continua sendo o conteúdo original, sem essa limpeza
+(a limpeza é só para a chave de identidade da sessão).
+
 Isso substitui uma versão anterior que sempre recriava uma conversa nova
 e sempre mandava a transcrição inteira como prompt — o que também
 quebrava geração de imagem/vídeo (o mesmo campo `text` é usado como

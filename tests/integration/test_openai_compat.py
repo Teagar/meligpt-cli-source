@@ -427,6 +427,78 @@ def test_openai_chat_completions_resumes_after_reformatted_history(
     assert captured_calls[1]["parent_message_id"] == "msg-1"
 
 
+def test_openai_chat_completions_resumes_despite_ephemeral_reminder_blocks(
+    client: TestClient, monkeypatch
+) -> None:
+    """Regressão exata do log real reportado: o OpenClaude injeta blocos
+    `<system-reminder>`/`<available-deferred-tools>` DENTRO das próprias
+    mensagens `user` (não como `system` separado), e o conteúdo desses
+    blocos (ex.: `snip_id=...`) muda a cada retomada — mesmo o texto que
+    a pessoa digitou sendo idêntico. Sem ignorar esses blocos ao calcular
+    a chave, a sessão nunca era reconhecida depois de um `--continue`.
+    """
+
+    import meligpt.clients.meligpt_http as client_module
+
+    captured_calls: list[dict] = []
+    turn = {"n": 0}
+
+    async def fake_stream(self, *, prompt, message_id, credentials, **kwargs):
+        turn["n"] += 1
+        captured_calls.append({"prompt": prompt, **kwargs})
+        yield {
+            "event": "message",
+            "data": {
+                "final": True,
+                "responseMessage": {
+                    "text": f"resposta {turn['n']}",
+                    "conversationId": "conv-reminder",
+                    "messageId": f"msg-{turn['n']}",
+                },
+            },
+        }
+
+    monkeypatch.setattr(client_module.MeliGPTClient, "stream_chat", fake_stream)
+
+    first_user_content = (
+        "<available-deferred-tools>\nAskUserQuestion, WebSearch\n</available-deferred-tools>\n\n"
+        "Ola\n<system-reminder>snip_id=701tx1; sessão original</system-reminder>"
+    )
+    first = client.post(
+        "/v1/chat/completions",
+        json={"model": "meligpt", "messages": [{"role": "user", "content": first_user_content}]},
+    )
+    assert first.status_code == 200
+
+    # Retomada (--continue): mesmo texto humano ("Ola"), mas o snip_id e o
+    # resto do bloco de reminder são regenerados com valores diferentes.
+    reloaded_user_content = (
+        "<available-deferred-tools>\nAskUserQuestion, WebSearch, Bash\n</available-deferred-tools>\n\n"
+        "Ola\n<system-reminder>snip_id=99zzq2; sessão recarregada, outro contexto</system-reminder>"
+    )
+    second = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "meligpt",
+            "messages": [
+                {"role": "user", "content": reloaded_user_content},
+                {"role": "assistant", "content": "resposta 1"},
+                {
+                    "role": "user",
+                    "content": "Como você se chama?\n<system-reminder>snip_id=abc123</system-reminder>",
+                },
+            ],
+        },
+    )
+    assert second.status_code == 200
+    assert len(captured_calls) == 2
+    assert captured_calls[1]["prompt"] == (
+        "Como você se chama?\n<system-reminder>snip_id=abc123</system-reminder>"
+    )
+    assert captured_calls[1]["conversation_id"] == "conv-reminder"
+    assert captured_calls[1]["parent_message_id"] == "msg-1"
+
+
 def test_openai_chat_completions_video_generation_uses_only_latest_message_when_resuming(
     client: TestClient, monkeypatch
 ) -> None:
