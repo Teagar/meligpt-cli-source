@@ -19,7 +19,7 @@ from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
 from starlette.responses import JSONResponse
 
-from meligpt.api.schemas import ChatRequest, HealthResponse
+from meligpt.api.schemas import ChatRequest, ForkRequest, HealthResponse
 from meligpt.catalog import ModelCatalog, resolve_model
 from meligpt.chat.service import (
     ChatFinished,
@@ -28,12 +28,16 @@ from meligpt.chat.service import (
     MirroredToolResult,
     TextChunk,
     WarningMessage,
+    fork_conversation,
     run_chat,
 )
+from meligpt.clients.meligpt_http import ForkOption
 from meligpt.config import Settings
 from meligpt.exceptions import MeliGPTError
 from meligpt.logging import get_logger, log_with_fields, new_request_id
 from meligpt.tools.registry import ToolRegistry
+
+_FORK_OPTIONS_BY_VALUE = {option.value: option for option in ForkOption}
 
 router = APIRouter()
 _logger = get_logger("api.routes")
@@ -69,6 +73,47 @@ def build_chat_router(
 ) -> APIRouter:
     local_router = APIRouter()
     catalog = catalog or ModelCatalog(settings)
+
+    @local_router.post("/v1/conversations/fork")
+    async def fork(body: ForkRequest) -> JSONResponse:
+        """Bifurca uma conversa MeliGPT (ver `meligpt.chat.service.fork_conversation`
+        e ``docs/`` para a semântica das três opções — mesmo contrato do
+        botão "Fork" da UI web, confirmado por HAR real)."""
+
+        option = _FORK_OPTIONS_BY_VALUE.get(body.option)
+        if option is None:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "error": (
+                        f"option inválida: {body.option!r} — use 'directPath', "
+                        "'includeBranches' ou '' (padrão)."
+                    ),
+                    "code": "invalid_fork_option",
+                },
+            )
+
+        try:
+            result = await fork_conversation(
+                conversation_id=body.conversation_id,
+                message_id=body.message_id,
+                settings=settings,
+                option=option,
+                split_at_target=body.split_at_target,
+                latest_message_id=body.latest_message_id,
+            )
+        except MeliGPTError as exc:
+            return JSONResponse(status_code=502, content=exc.to_dict())
+
+        return JSONResponse(
+            {
+                "success": True,
+                "conversation_id": result.conversation_id,
+                "title": result.title,
+                "message_count": result.message_count,
+            }
+        )
 
     @local_router.post("/v1/chat", response_model=None)
     async def chat(request: Request, body: ChatRequest) -> EventSourceResponse | JSONResponse:

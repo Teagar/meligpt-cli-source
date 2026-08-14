@@ -4,14 +4,36 @@ Permite conectar clientes que só sabem falar "OpenAI-compatible /v1"
 (ex.: OpenClaude, via ``OPENAI_BASE_URL``) ao servidor meligpt, traduzindo
 para/de :func:`meligpt.chat.service.run_chat`.
 
-MEMÓRIA DE CONVERSA (gambiarra deliberada, ver `_build_transcript_prompt`):
-o MeliGPT não tem `conversationId` persistente do nosso lado, e o
-protocolo OpenAI não manda nenhum identificador de sessão estável — mas o
+MEMÓRIA DE CONVERSA (ver `_ConversationTurn`/`ConversationSessionStore`):
+o protocolo OpenAI não manda nenhum identificador de sessão estável — o
 cliente (OpenClaude) reenvia o histórico completo em `messages` a cada
-requisição. Em vez de usar só a última mensagem (que fazia o modelo
-"esquecer" tudo a cada turno), serializamos a conversa inteira num único
-prompt de texto. Sem estado no servidor, funciona com qualquer cliente
-compatível.
+requisição, e é assim que ele "acha" que está dando memória ao servidor.
+Só que o MeliGPT (LibreChat por baixo) JÁ TEM memória de conversa de
+verdade do lado dele: uma vez que você manda `conversationId` +
+`parentMessageId`, o próprio servidor reconstrói o histórico — o cliente
+só precisa mandar a mensagem NOVA a cada turno (confirmado por HAR real,
+`forks.har`: o campo `text` de cada requisição nunca contém o histórico).
+
+A versão anterior deste adaptador ignorava isso e SEMPRE criava uma
+conversa nova no MeliGPT (`conversationId: null` a cada chamada — daí o
+"o assistente esquece tudo e começa um chat novo a cada mensagem"), e
+"compensava" colando a transcrição inteira (sistema + todos os turnos +
+snapshot de diretório) dentro do campo `text` a cada requisição — o que
+também quebrava geração de imagem/vídeo: como o MeliGPT usa `text` como
+prompt de geração, o vídeo/imagem acabava sendo gerado a partir da
+conversa inteira, não do pedido atual.
+
+Agora: depois de cada turno bem-sucedido, guardamos (só em memória, por
+processo — ver `meligpt.chat.session_store`) uma chave derivada do
+histórico + a resposta que acabou de sair, apontando para o
+`conversationId`/`messageId` reais do MeliGPT. No próximo turno, o
+histórico que chega bate com essa chave (é o mesmo histórico + UMA
+mensagem nova) — aí mandamos SÓ a mensagem nova, com `conversationId`/
+`parentMessageId` apontando pra sessão certa, exatamente como o cliente
+web real faz. Sem bater (primeira mensagem da conversa, ou o processo
+reiniciou e perdeu o cache), caímos de volta no bootstrap antigo
+(transcrição completa) só nessa UMA vez — depois disso a nova sessão já
+fica cacheada e os turnos seguintes voltam a ser incrementais.
 
 DESCOBERTA DE ARQUIVO DESLIGADA (`discovery_enabled=False`): a heurística
 de descoberta automática (`chat/prompt_builder.py`) foi desenhada para
@@ -55,9 +77,13 @@ from meligpt.chat.service import (
     WarningMessage,
     run_chat,
 )
+from meligpt.chat.session_store import ConversationSessionStore, SessionRecord, history_key
 from meligpt.config import Settings
 from meligpt.exceptions import MeliGPTError
+from meligpt.logging import get_logger, log_with_fields
 from meligpt.tools.registry import ToolRegistry
+
+_logger = get_logger("api.openai_compat")
 
 
 class ChatMessage(BaseModel):
@@ -77,21 +103,32 @@ class ChatCompletionRequest(BaseModel):
     mandam — sem isso, usa o destino padrão."""
 
 
+def _history_turns(messages: list[ChatMessage]) -> list[tuple[str, str]]:
+    """(role, content) de cada mensagem não vazia — a "impressão digital"
+    do histórico usada como chave em :mod:`meligpt.chat.session_store`.
+    Inclui `system` de propósito: se o system prompt do OpenClaude mudar
+    no meio (ex.: troca de projeto/skill), isso já é efetivamente uma
+    conversa diferente, então NÃO deve casar com uma sessão antiga.
+    """
+
+    return [(m.role, m.content) for m in messages if m.content.strip()]
+
+
 def _build_transcript_prompt(
     messages: list[ChatMessage], *, file_context: str | None = None
 ) -> str:
-    """Monta um prompt único com a conversa inteira, dando "memória" ao
-    chat apesar do MeliGPT não ter `conversationId` persistente do nosso
-    lado.
+    """Monta um prompt único com a conversa inteira — usado só como
+    BOOTSTRAP quando não há uma sessão MeliGPT cacheada para continuar
+    (primeiro turno da conversa, ou cache perdido por reinício do
+    servidor). Ver módulo para o fluxo normal (incremental).
 
     O OpenClaude (como qualquer cliente OpenAI-compatible padrão) reenvia
-    o histórico completo em `messages` a cada requisição — então, em vez
-    de só repassar a última mensagem (que fazia o modelo "esquecer" tudo
-    a cada turno), serializamos todo o histórico como transcrição e
-    pedimos para o modelo continuar como assistente. É uma solução
-    "gambiarra" deliberada: sem estado do lado do servidor, sem
-    `conversationId` mapeado — só reaproveita o que o próprio cliente já
-    manda.
+    o histórico completo em `messages` a cada requisição — então, quando
+    não temos por onde continuar a conversa real do MeliGPT, serializamos
+    todo o histórico como transcrição e pedimos para o modelo continuar
+    como assistente, SÓ NESSE turno. A resposta gerada já cria uma
+    conversa MeliGPT nova que os turnos seguintes vão conseguir
+    encadear de forma incremental (ver `_lookup_or_bootstrap`).
 
     ``file_context``, quando informado, entra como um bloco de sistema
     adicional com o snapshot atual do sandbox local (ver
@@ -170,23 +207,124 @@ async def _build_directory_snapshot(settings: Settings) -> str | None:
 
 
 def _sse_chunk(
-    completion_id: str, model: str, *, delta: dict[str, Any], finish_reason: str | None
+    completion_id: str,
+    model: str,
+    *,
+    delta: dict[str, Any],
+    finish_reason: str | None,
+    extra: dict[str, Any] | None = None,
 ) -> str:
-    payload = {
+    payload: dict[str, Any] = {
         "id": completion_id,
         "object": "chat.completion.chunk",
         "created": int(time.time()),
         "model": model,
         "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
     }
+    if extra:
+        payload.update(extra)
     return json.dumps(payload)
 
 
 def build_openai_router(
-    settings: Settings, registry: ToolRegistry, catalog: ModelCatalog | None = None
+    settings: Settings,
+    registry: ToolRegistry,
+    catalog: ModelCatalog | None = None,
+    session_store: ConversationSessionStore | None = None,
 ) -> APIRouter:
     local_router = APIRouter()
     catalog = catalog or ModelCatalog(settings)
+    # Uma instância por servidor: dá memória de conversa real entre
+    # requisições sucessivas do MESMO processo (ver docstring do módulo).
+    # Injetável (`session_store=`) só para os testes conseguirem inspecionar
+    # ou pré-popular o cache.
+    session_store = session_store or ConversationSessionStore(max_size=200)
+
+    async def _resolve_prompt(
+        messages: list[ChatMessage],
+    ) -> tuple[str, str | None, str | None]:
+        """Decide o que mandar pro MeliGPT neste turno.
+
+        Retorna ``(prompt, conversation_id, parent_message_id)``:
+
+        - Sessão conhecida (o histórico ANTES da última mensagem bate com
+          uma sessão cacheada): manda só a última mensagem, resumindo a
+          conversa MeliGPT real. É o caminho normal, turno a turno.
+        - Sessão desconhecida: bootstrap (ver `_build_transcript_prompt`)
+          — transcrição inteira nesta ÚNICA chamada, conversa nova no
+          MeliGPT (`conversation_id=None`).
+        """
+
+        if not messages:
+            return "", None, None
+
+        prior_turns = _history_turns(messages[:-1])
+        session: SessionRecord | None = None
+        if prior_turns:
+            session = session_store.lookup(history_key(prior_turns))
+
+        if session is not None:
+            log_with_fields(
+                _logger,
+                20,
+                "sessão MeliGPT reconhecida — continuando conversa existente",
+                conversation_id=session.conversation_id,
+                parent_message_id=session.last_message_id,
+            )
+            return messages[-1].content, session.conversation_id, session.last_message_id
+
+        log_with_fields(
+            _logger,
+            20,
+            "sessão desconhecida — bootstrap com transcrição completa (conversa nova)",
+            turn_count=len(messages),
+        )
+        file_context = await _build_directory_snapshot(settings)
+        prompt = _build_transcript_prompt(messages, file_context=file_context)
+        return prompt, None, None
+
+    def _remember_session(
+        messages: list[ChatMessage],
+        reply_content: str,
+        finished: ChatFinished,
+    ) -> None:
+        """Depois de um turno bem-sucedido, grava onde essa conversa (agora
+        com a resposta do assistente incluída) está ancorada no MeliGPT —
+        para o PRÓXIMO turno (que vai chegar com essa mesma transcrição +
+        uma mensagem nova, incluindo ``reply_content`` como o turno
+        `assistant`) conseguir continuar em vez de recomeçar.
+
+        ``reply_content`` é o que o ENDPOINT devolveu como
+        `choices[0].message.content` — não `finished.full_text` puro —
+        porque é isso (incluindo anotações locais de tool call/aviso) que
+        o OpenClaude vai ecoar de volta em `messages` no próximo turno; a
+        chave precisa bater com o que realmente chega depois.
+
+        Sem `conversation_id`/`response_message_id` confirmados pelo
+        backend (ex.: resposta sem `responseMessage`), não há o que
+        gravar — o próximo turno cai de volta no bootstrap, degradando
+        sem quebrar.
+        """
+
+        if not finished.conversation_id or not finished.response_message_id:
+            return
+        if not reply_content.strip():
+            return
+        turns = _history_turns(messages) + [("assistant", reply_content)]
+        session_store.remember(
+            history_key(turns),
+            SessionRecord(
+                conversation_id=finished.conversation_id,
+                last_message_id=finished.response_message_id,
+            ),
+        )
+        log_with_fields(
+            _logger,
+            20,
+            "sessão MeliGPT gravada — conversationId/messageId reais para este turno",
+            conversation_id=finished.conversation_id,
+            response_message_id=finished.response_message_id,
+        )
 
     @local_router.get("/v1/models")
     async def list_models(provider: str | None = None, endpoint: str | None = None) -> JSONResponse:
@@ -264,12 +402,12 @@ def build_openai_router(
         # igual independente do tipo do modelo selecionado.
         model_info = await catalog.get(body.model)
 
-        file_context = await _build_directory_snapshot(settings)
-        prompt = _build_transcript_prompt(body.messages, file_context=file_context)
+        prompt, conversation_id, parent_message_id = await _resolve_prompt(body.messages)
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
 
         if not body.stream:
             parts: list[str] = []
+            finished: ChatFinished | None = None
             try:
                 async for event in run_chat(
                     prompt=prompt,
@@ -279,6 +417,8 @@ def build_openai_router(
                     auto_files=True,
                     model_info=model_info,
                     media_dir=body.media_dir,
+                    conversation_id=conversation_id,
+                    parent_message_id=parent_message_id,
                 ):
                     if isinstance(event, TextChunk):
                         parts.append(event.text)
@@ -289,10 +429,14 @@ def build_openai_router(
                         parts.append(f"\n![{label}]({event.virtual_path})\n")
                     elif isinstance(event, WarningMessage):
                         parts.append(f"\n[aviso] {event.message}\n")
+                    elif isinstance(event, ChatFinished):
+                        finished = event
             except MeliGPTError as exc:
                 return JSONResponse(status_code=502, content=exc.to_dict())
 
             full_text = "".join(parts)
+            if finished is not None:
+                _remember_session(body.messages, full_text, finished)
             return JSONResponse(
                 {
                     "id": completion_id,
@@ -307,6 +451,12 @@ def build_openai_router(
                         }
                     ],
                     "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                    # Extensão fora do padrão OpenAI (o OpenClaude e outros
+                    # clientes ignoram campos desconhecidos): o conversationId/
+                    # messageId REAIS do MeliGPT para este turno — útil pra
+                    # testar/usar `meligpt fork` sem precisar abrir a UI web.
+                    "meligpt_conversation_id": finished.conversation_id if finished else None,
+                    "meligpt_message_id": finished.response_message_id if finished else None,
                 }
             )
 
@@ -316,6 +466,7 @@ def build_openai_router(
                     completion_id, body.model, delta={"role": "assistant"}, finish_reason=None
                 )
             }
+            reply_parts: list[str] = []
             try:
                 async for event in run_chat(
                     prompt=prompt,
@@ -325,6 +476,8 @@ def build_openai_router(
                     auto_files=True,
                     model_info=model_info,
                     media_dir=body.media_dir,
+                    conversation_id=conversation_id,
+                    parent_message_id=parent_message_id,
                 ):
                     if isinstance(event, TextChunk):
                         text = event.text
@@ -336,14 +489,25 @@ def build_openai_router(
                     elif isinstance(event, WarningMessage):
                         text = f"\n[aviso] {event.message}\n"
                     elif isinstance(event, ChatFinished):
+                        _remember_session(body.messages, "".join(reply_parts), event)
                         yield {
                             "data": _sse_chunk(
-                                completion_id, body.model, delta={}, finish_reason="stop"
+                                completion_id,
+                                body.model,
+                                delta={},
+                                finish_reason="stop",
+                                extra={
+                                    # Mesma extensão fora do padrão OpenAI da
+                                    # resposta não-streaming — ver ali.
+                                    "meligpt_conversation_id": event.conversation_id,
+                                    "meligpt_message_id": event.response_message_id,
+                                },
                             )
                         }
                         continue
                     else:
                         continue
+                    reply_parts.append(text)
                     yield {
                         "data": _sse_chunk(
                             completion_id, body.model, delta={"content": text}, finish_reason=None

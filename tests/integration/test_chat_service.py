@@ -735,3 +735,56 @@ async def test_run_chat_custom_media_dir_absolute_path_in_full_access_mode(
     assert len(generated) == 1
     saved_path = target_dir / "image_abc123.png"
     assert saved_path.read_bytes() == b"FAKEPNGBYTES"
+
+
+# --- fork_conversation --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fork_conversation_returns_summary(settings, monkeypatch) -> None:
+    import meligpt.chat.service as service_module
+    from meligpt.clients.meligpt_http import ForkOption
+
+    async def fake_fork(
+        self,
+        *,
+        conversation_id,
+        message_id,
+        credentials,
+        option=ForkOption.INCLUDE_ALL,
+        split_at_target=False,
+        latest_message_id=None,
+    ):
+        assert conversation_id == "conv-1"
+        assert message_id == "msg-1"
+        assert option is ForkOption.INCLUDE_ALL
+        return {
+            "conversation": {"conversationId": "new-conv", "title": "conversa bifurcada"},
+            "messages": [{"messageId": "m1"}, {"messageId": "m2"}, {"messageId": "m3"}],
+        }
+
+    monkeypatch.setattr(service_module.MeliGPTClient, "fork_conversation", fake_fork)
+
+    result = await service_module.fork_conversation(
+        conversation_id="conv-1", message_id="msg-1", settings=settings
+    )
+
+    assert result.conversation_id == "new-conv"
+    assert result.title == "conversa bifurcada"
+    assert result.message_count == 3
+
+
+@pytest.mark.asyncio
+async def test_fork_conversation_propagates_upstream_errors(settings, monkeypatch) -> None:
+    import meligpt.chat.service as service_module
+    from meligpt.exceptions import UpstreamForbiddenError
+
+    async def fake_fork_raises(self, **kwargs):
+        raise UpstreamForbiddenError("nao autorizado", status_code=403)
+
+    monkeypatch.setattr(service_module.MeliGPTClient, "fork_conversation", fake_fork_raises)
+
+    with pytest.raises(UpstreamForbiddenError):
+        await service_module.fork_conversation(
+            conversation_id="conv-1", message_id="msg-1", settings=settings
+        )

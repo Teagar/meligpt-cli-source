@@ -21,7 +21,7 @@ from meligpt.auth.token_manager import HarPromptCallback, TokenManager
 from meligpt.catalog import ModelInfo
 from meligpt.chat.events import FinalTextEvent, TextDeltaEvent, ToolCallEvent
 from meligpt.chat.prompt_builder import interpret_prompt
-from meligpt.clients.meligpt_http import MeliGPTClient
+from meligpt.clients.meligpt_http import ForkOption, MeliGPTClient
 from meligpt.config import Settings
 from meligpt.exceptions import MeliGPTError, RecoveryFailedError, UpstreamHTTPError
 from meligpt.filesystem import discovery
@@ -130,6 +130,17 @@ def _classify_media_type(filename: str) -> str:
 class ChatFinished:
     full_text: str
     had_text: bool
+    conversation_id: str | None = None
+    """Id da conversa MeliGPT usada neste turno (nova ou continuada) —
+    ``None`` quando o backend não confirmou um (ex.: fakes de teste sem
+    esse campo, ou resposta sem ``responseMessage``). Quem chama
+    ``run_chat`` guarda isso para reusar no próximo turno (ver
+    :mod:`meligpt.chat.session_store`)."""
+
+    response_message_id: str | None = None
+    """``messageId`` da resposta do assistente neste turno — vira o
+    ``parent_message_id`` do próximo turno para continuar a MESMA
+    conversa MeliGPT em vez de criar uma nova."""
 
 
 ChatServiceEvent = (
@@ -219,6 +230,8 @@ async def run_chat(
     credentials: Credentials | None = None,
     model_info: ModelInfo | None = None,
     media_dir: str | None = None,
+    conversation_id: str | None = None,
+    parent_message_id: str | None = None,
 ) -> AsyncIterator[ChatServiceEvent]:
     """Executa um turno completo de chat, produzindo eventos incrementais.
 
@@ -227,6 +240,13 @@ async def run_chat(
     mapeado 1:1 para o filesystem real em modo de acesso total) onde
     imagens/vídeos gerados neste turno são salvos, substituindo o destino
     padrão (``Settings.resolved_media_dir()``).
+
+    ``conversation_id``/``parent_message_id``, quando informados,
+    continuam uma conversa MeliGPT já existente em vez de criar uma nova
+    (ver :mod:`meligpt.clients.meligpt_http`). O ``conversation_id`` e o
+    ``response_message_id`` desta resposta (quando o backend os confirma)
+    saem em :class:`ChatFinished`, para quem chamou guardar e reusar no
+    próximo turno.
     """
 
     files = list(explicit_files or [])
@@ -279,15 +299,25 @@ async def run_chat(
 
     tool_calls: dict[str, ToolCallEvent] = {}
     full_text_parts: list[str] = []
+    result_conversation_id = conversation_id
+    result_response_message_id: str | None = None
 
     attempted_recovery = False
+    extra_kwargs: dict[str, Any] = {}
+    if model_info is not None:
+        extra_kwargs["model_info"] = model_info
+    if conversation_id is not None:
+        extra_kwargs["conversation_id"] = conversation_id
+    if parent_message_id is not None:
+        extra_kwargs["parent_message_id"] = parent_message_id
+
     while True:
         try:
             async for sse_event in client.stream_chat(
                 prompt=final_prompt,
                 message_id=message_id,
                 credentials=credentials,
-                **({"model_info": model_info} if model_info is not None else {}),
+                **extra_kwargs,
             ):
                 from meligpt.chat.events import parse_sse_data
 
@@ -296,6 +326,10 @@ async def run_chat(
                     full_text_parts.append(parsed.text)
                     yield TextChunk(parsed.text)
                 elif isinstance(parsed, FinalTextEvent):
+                    if parsed.conversation_id:
+                        result_conversation_id = parsed.conversation_id
+                    if parsed.response_message_id:
+                        result_response_message_id = parsed.response_message_id
                     if not full_text_parts:
                         # Só usa o texto final/completo quando nenhum delta
                         # chegou antes — evita duplicar a resposta quando o
@@ -346,7 +380,90 @@ async def run_chat(
     ):
         yield media_event
 
-    yield ChatFinished(full_text=full_text, had_text=bool(full_text))
+    yield ChatFinished(
+        full_text=full_text,
+        had_text=bool(full_text),
+        conversation_id=result_conversation_id,
+        response_message_id=result_response_message_id,
+    )
+
+
+@dataclass(frozen=True)
+class ForkResult:
+    """Resultado de :func:`fork_conversation` — a nova conversa MeliGPT
+    criada a partir de uma mensagem existente."""
+
+    conversation_id: str
+    title: str
+    message_count: int
+    raw: dict[str, Any]
+    """Resposta crua de ``POST /api/convos/fork`` (``conversation`` +
+    ``messages``), para quem precisar de mais detalhe do que o resumo
+    acima."""
+
+
+async def fork_conversation(
+    *,
+    conversation_id: str,
+    message_id: str,
+    settings: Settings,
+    option: ForkOption = ForkOption.INCLUDE_ALL,
+    split_at_target: bool = False,
+    latest_message_id: str | None = None,
+    interactive: bool = False,
+    prompt_for_har: HarPromptCallback | None = None,
+    credentials: Credentials | None = None,
+) -> ForkResult:
+    """Bifurca (``fork``) uma conversa MeliGPT a partir de ``message_id``.
+
+    Equivalente ao botão "Fork" da UI web do MeliGPT (``POST
+    /api/convos/fork``, ver HAR real ``forks.har``). ``option`` escolhe
+    quais mensagens são copiadas para a conversa nova — ver
+    :class:`meligpt.clients.meligpt_http.ForkOption` para a semântica
+    exata de cada uma das três opções.
+
+    Segue a mesma política de recuperação de 401 usada em
+    :func:`run_chat`: no máximo uma tentativa de reimportar credenciais
+    via HAR, só em modo interativo.
+    """
+
+    token_manager = TokenManager(settings)
+    if credentials is None:
+        credentials = token_manager.load_credentials()
+
+    client = MeliGPTClient(settings)
+    attempted_recovery = False
+    while True:
+        try:
+            raw = await client.fork_conversation(
+                conversation_id=conversation_id,
+                message_id=message_id,
+                credentials=credentials,
+                option=option,
+                split_at_target=split_at_target,
+                latest_message_id=latest_message_id,
+            )
+            break
+        except UpstreamHTTPError as exc:
+            if exc.status_code != 401 or attempted_recovery:
+                raise
+            try:
+                credentials = await token_manager.recover_from_401(
+                    exc, interactive=interactive, prompt_for_har=prompt_for_har
+                )
+            except RecoveryFailedError:
+                raise
+            attempted_recovery = True
+            continue
+
+    conversation = raw.get("conversation") or {}
+    messages = raw.get("messages") or []
+    return ForkResult(
+        conversation_id=conversation.get("conversationId", ""),
+        title=conversation.get("title", ""),
+        message_count=len(messages),
+        raw=raw,
+    )
 
 
 async def _download_generated_media(

@@ -134,6 +134,67 @@ ambos os caminhos passam pela mesma orquestração
 modelo remoto é espelhada da mesma forma independente de como você está
 conversando com ele.
 
+### Memória de conversa (como o OpenClaude "não esquece" mais)
+
+O protocolo OpenAI não tem noção de sessão: o OpenClaude reenvia o
+histórico inteiro em `messages` a cada requisição, "achando" que isso dá
+memória ao servidor do outro lado. O MeliGPT, por baixo, já tem memória
+de conversa de verdade (é LibreChat): uma vez que você manda
+`conversationId` + `parentMessageId`, o próprio backend reconstrói o
+histórico — não é preciso reenviar nada.
+
+Este servidor aproveita isso: depois de cada resposta, ele guarda (só em
+memória, por processo) um mapeamento entre "esse histórico específico" e
+o `conversationId`/`messageId` reais que o MeliGPT devolveu. No próximo
+turno — que chega com esse mesmo histórico + uma mensagem nova, porque é
+assim que o OpenClaude funciona — o servidor reconhece a sessão e manda
+**só a mensagem nova**, com `conversationId`/`parentMessageId` apontando
+pra conversa certa. Isso resolve dois problemas de uma vez:
+
+- **O assistente não "esquece" e começa um chat novo a cada mensagem** —
+  antes, cada chamada criava uma conversa `conversationId: null` nova no
+  MeliGPT; agora ela é continuada de verdade.
+- **Geração de imagem/vídeo usa só o pedido atual como prompt** — antes,
+  como a "memória" era feita colando a transcrição inteira dentro do
+  campo `text` (o mesmo campo usado como prompt de geração), pedir um
+  vídeo no meio de uma conversa longa fazia o MeliGPT gerar a partir da
+  conversa inteira, não do pedido. Agora `text` só carrega a mensagem
+  atual quando a conversa está sendo continuada.
+
+Quando não há uma sessão pra continuar (primeira mensagem da conversa, ou
+o servidor reiniciou e perdeu o cache em memória), ele cai de volta para
+o comportamento antigo só naquele turno: manda a transcrição inteira,
+cria uma conversa nova, e a partir daí volta a ficar incremental. Ou
+seja: nunca quebra, só degrada de forma previsível.
+
+### Bifurcar (fork) uma conversa
+
+`POST /v1/conversations/fork` espelha o botão "Fork" da UI web do
+MeliGPT (confirmado por HAR real). Três opções, iguais às da interface:
+
+| `option`            | Equivalente na UI                              |
+|----------------------|-------------------------------------------------|
+| `"directPath"`        | "Apenas mensagens visíveis"                     |
+| `"includeBranches"`   | "Incluir ramificações relacionadas"             |
+| `""` (padrão)          | "Incluir todos para/de aqui" (todas as mensagens, visíveis ou não) |
+
+```bash
+curl -X POST http://localhost:8080/v1/conversations/fork \
+  -H "Content-Type: application/json" \
+  -d '{"conversation_id": "<id>", "message_id": "<id>", "option": "includeBranches"}'
+```
+
+Ou pela CLI:
+
+```bash
+meligpt fork <conversation_id> <message_id> --option related-branches
+```
+
+`--option` aceita `visible-only`, `related-branches` ou `all` (default).
+Como o protocolo OpenAI não tem conceito de fork, essa funcionalidade só
+fica disponível via este endpoint/CLI — não há como acioná-la a partir do
+próprio OpenClaude.
+
 ### `/loop` e `CronCreate` (OpenClaude)
 
 Se você usa o OpenClaude apontado para este servidor, `/loop` e
@@ -142,8 +203,8 @@ agendador 100% client-side do próprio OpenClaude/Claude Code, que roda
 dentro do processo dele e reinjeta prompts na sessão — não fala com
 nenhum backend externo. Cada disparo automático chega neste servidor como
 uma chamada HTTP normal em `/v1/chat/completions`, indistinguível de uma
-mensagem digitada à mão, e a memória multi-turno (transcrição inteira
-reenviada a cada turno) já cobre isso.
+mensagem digitada à mão, e a memória de conversa incremental (ver acima)
+já cobre isso.
 
 ## Restringir a uma pasta específica (recomendado)
 

@@ -32,15 +32,29 @@ from meligpt.chat.service import (
     MirroredToolResult,
     TextChunk,
     WarningMessage,
+    fork_conversation,
     run_chat,
 )
+from meligpt.clients.meligpt_http import ForkOption
 from meligpt.config import Settings, get_settings
 from meligpt.exceptions import MeliGPTError
 from meligpt.logging import configure_logging, new_request_id
 from meligpt.tools.registry import build_default_registry
 from meligpt.ui import console
 
-KNOWN_COMMANDS = {"chat", "import-har", "serve", "models", "providers"}
+KNOWN_COMMANDS = {"chat", "import-har", "serve", "models", "providers", "fork"}
+
+_FORK_OPTIONS_BY_VALUE = {option.value: option for option in ForkOption}
+#: Aliases mais fáceis de digitar que os valores reais do payload (que
+#: incluem uma string vazia para a opção padrão — ver `ForkOption`).
+_FORK_OPTION_CHOICES = {
+    "visible-only": ForkOption.VISIBLE_ONLY,
+    "direct-path": ForkOption.VISIBLE_ONLY,
+    "related-branches": ForkOption.INCLUDE_RELATED_BRANCHES,
+    "include-branches": ForkOption.INCLUDE_RELATED_BRANCHES,
+    "all": ForkOption.INCLUDE_ALL,
+    "default": ForkOption.INCLUDE_ALL,
+}
 
 
 def _normalize_argv(argv: list[str]) -> list[str]:
@@ -107,6 +121,32 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("providers", help="Lista os provedores/rotas conhecidos.")
 
+    fork_parser = subparsers.add_parser(
+        "fork", help="Bifurca uma conversa MeliGPT existente a partir de uma mensagem."
+    )
+    fork_parser.add_argument("conversation_id", help="conversationId da conversa original.")
+    fork_parser.add_argument("message_id", help="messageId da mensagem alvo da bifurcação.")
+    fork_parser.add_argument(
+        "--option",
+        choices=sorted(_FORK_OPTION_CHOICES),
+        default="all",
+        help=(
+            "visible-only = apenas mensagens visíveis (sem ramificações); "
+            "related-branches = caminho direto + ramificações relacionadas; "
+            "all (padrão) = todas as mensagens de/para o alvo, visíveis ou não."
+        ),
+    )
+    fork_parser.add_argument(
+        "--split-at-target",
+        action="store_true",
+        help="Corta a conversa bifurcada exatamente na mensagem alvo (não inclui respostas depois dela).",
+    )
+    fork_parser.add_argument(
+        "--latest-message-id",
+        default=None,
+        help="Sobrepõe qual mensagem é tratada como 'mais recente' na bifurcação (default: message_id).",
+    )
+
     return parser
 
 
@@ -151,6 +191,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == "providers":
         return asyncio.run(_run_providers_command(settings))
+
+    if command == "fork":
+        return asyncio.run(_run_fork_command(args, settings))
 
     if command == "serve":
         _apply_serve_scope(args, settings)
@@ -231,6 +274,40 @@ async def _run_providers_command(settings: Settings) -> int:
     catalog = ModelCatalog(settings)
     for provider in await catalog.list_providers():
         console.info(f"{provider.id}  [{provider.route}]")
+    return 0
+
+
+async def _run_fork_command(args: argparse.Namespace, settings: Settings) -> int:
+    new_request_id()
+    option = _FORK_OPTION_CHOICES[args.option]
+
+    async def prompt_for_har() -> Path | None:
+        if not sys.stdin.isatty():
+            return None
+        answer = (
+            input("\nDeseja importar um HAR recente e tentar novamente? [s/N] ").strip().lower()
+        )
+        if answer not in ("s", "sim"):
+            return None
+        return Path(input("Caminho do arquivo HAR: ").strip())
+
+    try:
+        result = await fork_conversation(
+            conversation_id=args.conversation_id,
+            message_id=args.message_id,
+            settings=settings,
+            option=option,
+            split_at_target=args.split_at_target,
+            latest_message_id=args.latest_message_id,
+            interactive=sys.stdin.isatty(),
+            prompt_for_har=prompt_for_har,
+        )
+    except MeliGPTError as exc:
+        console.error(exc.message)
+        return 1
+
+    console.info(f"Conversa bifurcada: {result.conversation_id!r} ({result.title!r})")
+    console.info(f"{result.message_count} mensagem(ns) copiada(s).")
     return 0
 
 
