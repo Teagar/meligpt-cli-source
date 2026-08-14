@@ -59,6 +59,40 @@ cli.py
 O servidor HTTP (`api/routes.py`) chama exatamente `chat.service.run_chat()`
 e traduz os eventos para SSE — nenhuma lógica de negócio é duplicada.
 
+## Memória de conversa no adaptador OpenAI-compatible
+
+`api/openai_compat.py` (usado pelo OpenClaude) não recebe nenhum
+identificador de sessão do protocolo OpenAI — só um `messages[]` que
+cresce a cada turno. `chat/session_store.py` guarda um cache LRU, em
+memória, por processo: `hash(histórico) -> (conversationId, messageId)`
+reais do MeliGPT. A cada turno:
+
+1. Calcula o hash do histórico SEM a última mensagem.
+2. Se bate com uma entrada do cache: manda só a última mensagem, com
+   `conversationId`/`parentMessageId` da entrada — continua a conversa
+   MeliGPT de verdade.
+3. Se não bate (primeiro turno, ou cache perdido num restart): monta a
+   transcrição inteira como bootstrap (`_build_transcript_prompt`),
+   conversa nova no MeliGPT.
+4. Depois de qualquer resposta bem-sucedida, grava
+   `hash(histórico + resposta) -> (conversationId, messageId)` — pronto
+   pro próximo turno encaixar no passo 2.
+
+Isso substitui uma versão anterior que sempre recriava uma conversa nova
+e sempre mandava a transcrição inteira como prompt — o que também
+quebrava geração de imagem/vídeo (o mesmo campo `text` é usado como
+prompt de geração pelo MeliGPT, então a geração acabava usando a conversa
+inteira em vez do pedido atual).
+
+## Fork de conversa
+
+`clients/meligpt_http.py:MeliGPTClient.fork_conversation()` chama
+`POST /api/convos/fork` do MeliGPT/LibreChat diretamente (payload e
+semântica confirmados por HAR real) — não há árvore de mensagens local
+pra replicar, o MeliGPT já é a fonte da verdade. Exposto via
+`chat/service.py:fork_conversation()` (mesma política de retry de 401 que
+`run_chat`), `POST /v1/conversations/fork` e `meligpt fork`.
+
 ## Registro de ferramentas
 
 `tools/registry.py` expõe um `ToolRegistry` (nome → instância). Nenhum

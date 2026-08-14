@@ -166,3 +166,137 @@ async def test_without_model_info_uses_default_settings(settings) -> None:
     assert captured["path"] == "/api/ask/openAI"
     assert captured["payload"]["model"] == settings.model
     assert captured["payload"]["endpoint"] == "openAI"
+
+
+# --- fork_conversation ------------------------------------------------
+#
+# Payload/semântica confirmados por HAR real (`forks.har`, 2026-08-13) —
+# ver `meligpt.clients.meligpt_http.ForkOption`.
+
+
+@pytest.mark.asyncio
+async def test_fork_conversation_sends_expected_payload(settings, monkeypatch) -> None:
+    import json as json_module
+
+    from meligpt.clients.meligpt_http import ForkOption
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["payload"] = json_module.loads(request.content)
+        captured["accept"] = request.headers.get("accept")
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={
+                "conversation": {"conversationId": "new-conv-id", "title": "bifurcada"},
+                "messages": [{"messageId": "m1"}, {"messageId": "m2"}],
+            },
+        )
+
+    client = MeliGPTClient(settings, transport=httpx.MockTransport(handler))
+    result = await client.fork_conversation(
+        conversation_id="conv-1",
+        message_id="msg-1",
+        credentials=CREDS,
+        option=ForkOption.INCLUDE_RELATED_BRANCHES,
+    )
+
+    assert captured["path"] == "/api/convos/fork"
+    assert captured["accept"] == "application/json"
+    assert captured["payload"] == {
+        "messageId": "msg-1",
+        "conversationId": "conv-1",
+        "option": "includeBranches",
+        "splitAtTarget": False,
+        "latestMessageId": "msg-1",
+    }
+    assert result["conversation"]["conversationId"] == "new-conv-id"
+
+
+@pytest.mark.asyncio
+async def test_fork_conversation_default_option_is_empty_string(settings, monkeypatch) -> None:
+    """'Incluir todos para/de aqui' é o padrão do MeliGPT/LibreChat e é
+    mandado como string vazia no payload — confirmado por HAR real."""
+
+    import json as json_module
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json_module.loads(request.content)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"conversation": {"conversationId": "c"}, "messages": []},
+        )
+
+    client = MeliGPTClient(settings, transport=httpx.MockTransport(handler))
+    await client.fork_conversation(conversation_id="conv-1", message_id="msg-1", credentials=CREDS)
+
+    assert captured["payload"]["option"] == ""
+
+
+@pytest.mark.asyncio
+async def test_fork_conversation_visible_only_option(settings, monkeypatch) -> None:
+    import json as json_module
+
+    from meligpt.clients.meligpt_http import ForkOption
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json_module.loads(request.content)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"conversation": {"conversationId": "c"}, "messages": []},
+        )
+
+    client = MeliGPTClient(settings, transport=httpx.MockTransport(handler))
+    await client.fork_conversation(
+        conversation_id="conv-1",
+        message_id="msg-1",
+        credentials=CREDS,
+        option=ForkOption.VISIBLE_ONLY,
+    )
+
+    assert captured["payload"]["option"] == "directPath"
+
+
+@pytest.mark.asyncio
+async def test_fork_conversation_401_raises_upstream_http_error(settings, monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, headers={"content-type": "application/json"}, content=b"{}")
+
+    client = MeliGPTClient(settings, transport=httpx.MockTransport(handler))
+    with pytest.raises(UpstreamHTTPError) as exc_info:
+        await client.fork_conversation(
+            conversation_id="conv-1", message_id="msg-1", credentials=CREDS
+        )
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_fork_conversation_403_raises_forbidden(settings, monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, headers={"content-type": "application/json"}, content=b"{}")
+
+    client = MeliGPTClient(settings, transport=httpx.MockTransport(handler))
+    with pytest.raises(UpstreamForbiddenError):
+        await client.fork_conversation(
+            conversation_id="conv-1", message_id="msg-1", credentials=CREDS
+        )
+
+
+@pytest.mark.asyncio
+async def test_fork_conversation_timeout_raises_upstream_timeout(settings, monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timeout simulado")
+
+    client = MeliGPTClient(settings, transport=httpx.MockTransport(handler))
+    with pytest.raises(UpstreamTimeoutError):
+        await client.fork_conversation(
+            conversation_id="conv-1", message_id="msg-1", credentials=CREDS
+        )

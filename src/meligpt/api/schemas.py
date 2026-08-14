@@ -26,3 +26,18 @@ class ChatRequest(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str = "ok"
+
+
+class ForkRequest(BaseModel):
+    conversation_id: str = Field(min_length=1)
+    message_id: str = Field(min_length=1)
+    option: str = Field(
+        default="",
+        description=(
+            "'directPath' (só mensagens visíveis), 'includeBranches' "
+            "(caminho + ramificações relacionadas), ou '' (padrão — todas "
+            "as mensagens de/para o alvo, visíveis ou não)."
+        ),
+    )
+    split_at_target: bool = False
+    latest_message_id: str | None = None

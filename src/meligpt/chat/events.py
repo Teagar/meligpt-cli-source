@@ -36,12 +36,22 @@ class TextDeltaEvent:
 class FinalTextEvent:
     """Texto final/completo (não incremental), visto em
     ``responseMessage.text`` / ``responseMessage.content[].text``. A
-    camada de serviço (:mod:`meligpt.chat.service`) só usa isso quando
-    nenhum ``TextDeltaEvent`` chegou antes, para não duplicar a resposta
-    quando o backend manda os dois.
+    camada de serviço (:mod:`meligpt.chat.service`) só usa o texto disso
+    quando nenhum ``TextDeltaEvent`` chegou antes, para não duplicar a
+    resposta quando o backend manda os dois.
+
+    ``conversation_id``/``response_message_id``, quando presentes (ver
+    HAR real: ambos vêm em ``responseMessage.conversationId`` /
+    ``responseMessage.messageId`` no evento final), são o que permite
+    dar memória de verdade à conversa — resumir depois com
+    ``conversationId`` + ``parentMessageId``/``responseMessageId`` em vez
+    de reenviar a transcrição inteira a cada turno (ver
+    :mod:`meligpt.api.openai_compat`).
     """
 
     text: str
+    conversation_id: str | None = None
+    response_message_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,7 +92,11 @@ def parse_sse_data(data: dict[str, Any]) -> ChatEvent:
     if isinstance(response_message, dict):
         text = _extract_response_message_text(response_message)
         if text:
-            return FinalTextEvent(text=text)
+            return FinalTextEvent(
+                text=text,
+                conversation_id=response_message.get("conversationId"),
+                response_message_id=response_message.get("messageId"),
+            )
 
     event_type = data.get("event")
 

@@ -107,3 +107,47 @@ def test_serve_without_scope_flags_defaults_to_none() -> None:
 def test_help_flag_is_not_rewritten() -> None:
     assert _normalize_argv(["--help"]) == ["--help"]
     assert _normalize_argv(["-h"]) == ["-h"]
+
+
+def test_fork_subcommand_defaults() -> None:
+    args = _parse(["fork", "conv-1", "msg-1"])
+    assert args.command == "fork"
+    assert args.conversation_id == "conv-1"
+    assert args.message_id == "msg-1"
+    assert args.option == "all"
+    assert args.split_at_target is False
+    assert args.latest_message_id is None
+
+
+def test_fork_subcommand_with_visible_only_option() -> None:
+    args = _parse(["fork", "conv-1", "msg-1", "--option", "visible-only"])
+    assert args.option == "visible-only"
+
+
+def test_fork_subcommand_with_related_branches_option() -> None:
+    args = _parse(["fork", "conv-1", "msg-1", "--option", "related-branches"])
+    assert args.option == "related-branches"
+
+
+def test_fork_subcommand_with_split_at_target_and_latest_message_id() -> None:
+    args = _parse(
+        [
+            "fork",
+            "conv-1",
+            "msg-1",
+            "--split-at-target",
+            "--latest-message-id",
+            "msg-9",
+        ]
+    )
+    assert args.split_at_target is True
+    assert args.latest_message_id == "msg-9"
+
+
+def test_fork_subcommand_not_swallowed_by_default_chat() -> None:
+    """Regressão do mesmo tipo do `models`/`providers`: `fork` precisa
+    continuar sendo reconhecido como subcomando explícito, não tratado
+    como o início de uma mensagem de chat "solta"."""
+
+    args = _parse(["fork", "conv-1", "msg-1"])
+    assert args.command == "fork"
