@@ -64,10 +64,20 @@ e traduz os eventos para SSE — nenhuma lógica de negócio é duplicada.
 `api/openai_compat.py` (usado pelo OpenClaude) não recebe nenhum
 identificador de sessão do protocolo OpenAI — só um `messages[]` que
 cresce a cada turno. `chat/session_store.py` guarda um cache LRU, em
-memória, por processo: `hash(histórico) -> (conversationId, messageId)`
-reais do MeliGPT. A cada turno:
+memória, por processo: `hash(mensagens "user") -> (conversationId,
+messageId)` reais do MeliGPT. A chave usa **só as mensagens de papel
+`user`** — nunca `system`/`assistant` — de propósito (ver
+`session_store.py` e `_history_turns` em `openai_compat.py`): essas duas
+costumam ser reconstruídas em situações legítimas de continuação (ex.:
+`openclaude --continue` recarrega a conversa salva e regenera o `system`
+e as anotações de tool call do `assistant`, mas o texto que o usuário
+digitou permanece o mesmo). Casar por hash da transcrição inteira
+quebrava exatamente esse caso — a sessão nunca era reconhecida depois de
+um `--continue`, e cada retomada virava uma conversa nova no MeliGPT.
 
-1. Calcula o hash do histórico SEM a última mensagem.
+A cada turno:
+
+1. Calcula o hash das mensagens `user` SEM a última.
 2. Se bate com uma entrada do cache: manda só a última mensagem, com
    `conversationId`/`parentMessageId` da entrada — continua a conversa
    MeliGPT de verdade.
@@ -75,8 +85,12 @@ reais do MeliGPT. A cada turno:
    transcrição inteira como bootstrap (`_build_transcript_prompt`),
    conversa nova no MeliGPT.
 4. Depois de qualquer resposta bem-sucedida, grava
-   `hash(histórico + resposta) -> (conversationId, messageId)` — pronto
-   pro próximo turno encaixar no passo 2.
+   `hash(mensagens "user", incluindo a que acabou de ser respondida) ->
+   (conversationId, messageId)` — pronto pro próximo turno encaixar no
+   passo 2.
+
+Trade-off aceito: duas conversas diferentes com a MESMA sequência exata
+de mensagens do usuário colidiriam na mesma sessão (raro na prática).
 
 Isso substitui uma versão anterior que sempre recriava uma conversa nova
 e sempre mandava a transcrição inteira como prompt — o que também

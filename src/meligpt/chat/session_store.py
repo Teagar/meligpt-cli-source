@@ -34,6 +34,19 @@ caímos de volta no bootstrap (ver :mod:`meligpt.api.openai_compat`).
 
 É um cache best-effort e só em memória: perder uma entrada nunca causa
 erro, só degrada de volta para o bootstrap de uma transcrição.
+
+A chave é derivada SÓ das mensagens ``user`` (não de `system`/`assistant`)
+de propósito: é a parte do histórico que o cliente tem menos motivo para
+reformatar entre uma chamada e outra — mensagens `assistant` costumam vir
+com anotações locais nossas (tool calls espelhadas, avisos) e o `system`
+pode ser regenerado a cada processo (timestamp, diretório atual etc.).
+Um cliente que recarrega uma conversa salva (ex.: `openclaude --continue`)
+tende a preservar o texto literal que o usuário digitou mesmo quando
+reconstrói o resto do payload do zero — então casar só por aí é bem mais
+resistente a isso do que um hash da transcrição inteira. O trade-off:
+duas conversas diferentes com a MESMA sequência exata de mensagens do
+usuário (raro, mas possível em testes roteirizados) colidiriam na mesma
+sessão.
 """
 
 from __future__ import annotations

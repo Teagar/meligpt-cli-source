@@ -144,12 +144,18 @@ de conversa de verdade (é LibreChat): uma vez que você manda
 histórico — não é preciso reenviar nada.
 
 Este servidor aproveita isso: depois de cada resposta, ele guarda (só em
-memória, por processo) um mapeamento entre "esse histórico específico" e
-o `conversationId`/`messageId` reais que o MeliGPT devolveu. No próximo
-turno — que chega com esse mesmo histórico + uma mensagem nova, porque é
+memória, por processo) um mapeamento entre "essa sequência específica de
+mensagens do usuário" e o `conversationId`/`messageId` reais que o
+MeliGPT devolveu — **a chave usa só as mensagens `user`, nunca
+`system`/`assistant`** (ver `chat/session_store.py`), justamente porque
+essas duas costumam ser reconstruídas do zero em situações legítimas de
+continuação — por exemplo, `openclaude --continue` recarrega a conversa
+salva e regenera o `system` e as anotações de tool call do `assistant`,
+mas o texto que você digitou continua sendo o mesmo. No próximo turno —
+que chega com essas mesmas perguntas do usuário + uma nova, porque é
 assim que o OpenClaude funciona — o servidor reconhece a sessão e manda
 **só a mensagem nova**, com `conversationId`/`parentMessageId` apontando
-pra conversa certa. Isso resolve dois problemas de uma vez:
+pra conversa certa. Isso resolve três problemas de uma vez:
 
 - **O assistente não "esquece" e começa um chat novo a cada mensagem** —
   antes, cada chamada criava uma conversa `conversationId: null` nova no
@@ -160,6 +166,9 @@ pra conversa certa. Isso resolve dois problemas de uma vez:
   vídeo no meio de uma conversa longa fazia o MeliGPT gerar a partir da
   conversa inteira, não do pedido. Agora `text` só carrega a mensagem
   atual quando a conversa está sendo continuada.
+- **`openclaude --continue` volta pro chat original, em vez de criar um
+  novo** — a sessão é reconhecida mesmo que o `system`/`assistant`
+  tenham sido reconstruídos de forma diferente ao recarregar.
 
 Quando não há uma sessão pra continuar (primeira mensagem da conversa, ou
 o servidor reiniciou e perdeu o cache em memória), ele cai de volta para
