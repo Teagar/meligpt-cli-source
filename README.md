@@ -168,7 +168,14 @@ pra conversa certa. Isso resolve três problemas de uma vez:
   atual quando a conversa está sendo continuada.
 - **`openclaude --continue` volta pro chat original, em vez de criar um
   novo** — a sessão é reconhecida mesmo que o `system`/`assistant`
-  tenham sido reconstruídos de forma diferente ao recarregar.
+  tenham sido reconstruídos de forma diferente ao recarregar, e mesmo
+  que as próprias mensagens `user` tragam blocos efêmeros injetados pelo
+  OpenClaude/Claude Code (`<system-reminder>`, `<available-deferred-tools>`
+  — reminders de estado, listas de ferramentas disponíveis no turno) que
+  mudam a cada retomada mesmo pro MESMO texto digitado. Esses blocos são
+  ignorados ao calcular a chave (`_stable_user_text` em
+  `api/openai_compat.py`) — extensível caso o OpenClaude passe a usar
+  outra tag ephemeral no futuro.
 
 Quando não há uma sessão pra continuar (primeira mensagem da conversa, ou
 o servidor reiniciou e perdeu o cache em memória), ele cai de volta para

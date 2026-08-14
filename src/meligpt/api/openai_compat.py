@@ -63,6 +63,7 @@ OpenClaude) não é acionado por este adaptador.
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -108,13 +109,45 @@ class ChatCompletionRequest(BaseModel):
     mandam — sem isso, usa o destino padrão."""
 
 
-def _history_turns(messages: list[ChatMessage]) -> list[tuple[str, str]]:
-    """As mensagens ``user`` (só elas — ver `session_store` pra entender
-    por quê) usadas como "impressão digital" do histórico em
-    :mod:`meligpt.chat.session_store`.
+#: Blocos que o OpenClaude/Claude Code injeta DENTRO das próprias
+#: mensagens `user` (não como `system` separado) — reminders de estado,
+#: listas de ferramentas disponíveis no turno, etc. Confirmado por log
+#: real (`--log-level debug`): esses blocos trazem referências efêmeras
+#: (ex.: ``snip_id=...``) que mudam a cada retomada da conversa mesmo
+#: quando o texto que a pessoa digitou é idêntico — por isso entram na
+#: lista de exclusão antes de calcular a chave de sessão. Lista extensível
+#: conforme outros nomes de tag forem observados.
+_EPHEMERAL_WRAPPER_TAGS = ("system-reminder", "available-deferred-tools")
+_EPHEMERAL_WRAPPER_RE = re.compile(
+    r"<(" + "|".join(_EPHEMERAL_WRAPPER_TAGS) + r")\b[^>]*>.*?</\1>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _stable_user_text(content: str) -> str:
+    """Texto de uma mensagem `user` sem os blocos efêmeros acima — a parte
+    que realmente identifica "a mesma pergunta" entre um envio original e
+    uma retomada (`openclaude --continue`). Ver `_EPHEMERAL_WRAPPER_TAGS`.
     """
 
-    return [(m.role, m.content) for m in messages if m.role == "user" and m.content.strip()]
+    stripped = _EPHEMERAL_WRAPPER_RE.sub("", content)
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
+def _history_turns(messages: list[ChatMessage]) -> list[tuple[str, str]]:
+    """As mensagens ``user`` (só elas — ver `session_store` pra entender
+    por quê), já sem blocos efêmeros (`_stable_user_text`), usadas como
+    "impressão digital" do histórico em :mod:`meligpt.chat.session_store`.
+    """
+
+    turns = []
+    for m in messages:
+        if m.role != "user":
+            continue
+        stable = _stable_user_text(m.content)
+        if stable:
+            turns.append(("user", stable))
+    return turns
 
 
 def _build_transcript_prompt(
