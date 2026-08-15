@@ -224,7 +224,18 @@ class MeliGPTClient:
 
                     content_type = response.headers.get("content-type", "")
                     if "text/event-stream" not in content_type:
-                        raise UpstreamError(f"resposta inesperada: Content-Type {content_type!r}")
+                        body_preview = (await response.aread())[:2000]
+                        log_with_fields(
+                            _logger,
+                            30,
+                            "resposta 200 sem Content-Type de SSE — corpo abaixo",
+                            content_type=content_type,
+                            body_preview=body_preview.decode("utf-8", errors="replace"),
+                        )
+                        raise UpstreamError(
+                            f"resposta inesperada: Content-Type {content_type!r} "
+                            f"(corpo: {body_preview[:300]!r})"
+                        )
 
                     async for line in response.aiter_lines():
                         line = line.rstrip("\r")
