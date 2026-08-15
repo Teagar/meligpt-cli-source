@@ -92,6 +92,23 @@ async def test_stream_unexpected_content_type_raises(settings, monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+async def test_stream_empty_content_type_includes_body_preview(settings, monkeypatch) -> None:
+    """Regressão de um caso real (modelos de imagem dedicados como
+    `nano-banana`): 200 OK sem Content-Type, corpo às vezes vazio. A
+    mensagem de erro precisa trazer o corpo pra dar alguma pista, não só
+    'Content-Type vazio'.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={}, content=b'{"error":"endpoint nao suportado"}')
+
+    client = MeliGPTClient(settings, transport=httpx.MockTransport(handler))
+    with pytest.raises(UpstreamError) as exc_info:
+        await _collect(client)
+    assert "endpoint nao suportado" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_stream_timeout_raises_upstream_timeout(settings, monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("timeout simulado")

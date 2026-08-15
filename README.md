@@ -357,6 +357,26 @@ funcionou (mesmo processo usado pra confirmar os 12 originais e o fork:
 `Network` do DevTools → filtra por `/api/ask/` → botão direito → "Save
 all as HAR") pra eu marcar como `confirmed: true` de vez.
 
+### Modelos de imagem "dedicados" — status conhecido: quebrados
+
+Confirmado ao vivo (2026-08-15): `nano-banana`, `nano-banana-2`,
+`gemini-3-pro-image` e `imagen-3.0-generate` retornam `200 OK` sem
+`Content-Type` e corpo vazio — não é um id "desconhecido" comum, é um
+formato de requisição diferente do que usamos para chat/vídeo, que ainda
+não temos evidência de HAR pra implementar direito.
+
+**Não é um bloqueio pra gerar imagem hoje**: qualquer modelo de CHAT
+normal (ex.: `gpt-5.6-sol`) já gera imagem funcionando de ponta a ponta
+— o modelo aciona uma tool call `ImageGeneration` do lado do MeliGPT, e
+o link `/api/media/...` da imagem é detectado e baixado automaticamente
+(mesma lógica usada pros vídeos). O aviso `ferramenta não espelhada:
+ImageGeneration` que aparece é só informativo — a ferramenta roda do
+lado do servidor, não precisa de mirror local.
+
+Se você conseguir um HAR de um desses 4 modelos gerando imagem com
+sucesso na UI web do MeliGPT (mesmo processo de sempre), eu implemento o
+formato certo.
+
 ## Configuração
 
 Todas as variáveis usam o prefixo `MELIGPT_` — ver
