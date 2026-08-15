@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 from meligpt.auth.har_importer import import_har
-from meligpt.catalog import ModelCatalog, resolve_model
+from meligpt.catalog import ModelCatalog, ModelInfo, resolve_model
 from meligpt.chat.service import (
     AmbiguousDiscoveryError,
     ChatFinished,
@@ -256,17 +256,32 @@ def _run_import_har(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+_TYPE_LABELS: dict[str, str] = {"chat": "GERAL (chat)", "image": "IMAGEM", "video": "VÍDEO"}
+_TYPE_ORDER = ("chat", "image", "video")
+
+
 async def _run_models_command(args: argparse.Namespace, settings: Settings) -> int:
     catalog = ModelCatalog(settings)
     models = await catalog.list_models(provider=args.provider, endpoint=args.endpoint)
     if not models:
         console.info("nenhum modelo encontrado.")
         return 0
+
+    by_type: dict[str, list[ModelInfo]] = {t: [] for t in _TYPE_ORDER}
     for model in models:
-        console.info(
-            f"{model.id}  [{model.provider} -> {model.payload_endpoint}, "
-            f"rota={model.route}, tipo={model.type}]"
-        )
+        by_type.setdefault(model.type, []).append(model)
+
+    for model_type in (*_TYPE_ORDER, *[t for t in by_type if t not in _TYPE_ORDER]):
+        entries = by_type.get(model_type) or []
+        if not entries:
+            continue
+        console.info(f"── {_TYPE_LABELS.get(model_type, model_type.upper())} ──")
+        for model in entries:
+            flag = "" if model.confirmed else "  [NÃO CONFIRMADO]"
+            console.info(
+                f"  {model.id}  [{model.provider} -> {model.payload_endpoint}, "
+                f"rota={model.route}]{flag}"
+            )
     return 0
 
 
