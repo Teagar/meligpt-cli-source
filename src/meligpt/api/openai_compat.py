@@ -400,6 +400,10 @@ def build_openai_router(
                         "endpoint": m.payload_endpoint,
                         "route": m.route,
                         "type": m.type,
+                        # Extensão fora do padrão OpenAI: sinaliza ids
+                        # inferidos por convenção (nunca vistos num HAR
+                        # real) — ver meligpt.catalog.ModelInfo.confirmed.
+                        "confirmed": m.confirmed,
                     }
                     for m in models
                 ],
@@ -428,6 +432,7 @@ def build_openai_router(
                 "endpoint": model.payload_endpoint,
                 "route": model.route,
                 "type": model.type,
+                "confirmed": model.confirmed,
             }
         )
 

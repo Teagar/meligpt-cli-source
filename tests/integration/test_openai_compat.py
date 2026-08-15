@@ -51,14 +51,25 @@ def test_openai_models_list_filters_by_provider(client: TestClient) -> None:
     response = client.get("/v1/models", params={"provider": "google"})
     assert response.status_code == 200
     ids = {m["id"] for m in response.json()["data"]}
-    assert ids == {"gemini-3.6-flash", "veo-3.1-generate-001", "veo-3.1-fast-generate-001"}
+    assert {"gemini-3.6-flash", "veo-3.1-generate-001", "veo-3.1-fast-generate-001"} <= ids
+    assert all(m == "google" for m in {m["provider"] for m in response.json()["data"]})
 
 
 def test_openai_models_list_filters_by_endpoint(client: TestClient) -> None:
     response = client.get("/v1/models", params={"endpoint": "bedrock"})
     assert response.status_code == 200
     ids = [m["id"] for m in response.json()["data"]]
-    assert ids == ["claude-5-sonnet"]
+    assert "claude-5-sonnet" in ids
+    assert all(m["endpoint"] == "bedrock" for m in response.json()["data"])
+
+
+def test_openai_models_list_exposes_confirmed_flag(client: TestClient) -> None:
+    response = client.get("/v1/models")
+    assert response.status_code == 200
+    by_id = {m["id"]: m for m in response.json()["data"]}
+    assert by_id["gpt-5.6-sol"]["confirmed"] is True
+    # Modelo colado da UI (sem HAR próprio) — melhor esforço.
+    assert by_id["gpt-5"]["confirmed"] is False
 
 
 def test_openai_get_model_by_id(client: TestClient) -> None:

@@ -16,8 +16,8 @@ from meligpt.exceptions import ModelNotFoundError, ProviderNotFoundError
 
 def test_fallback_models_have_gpt_sol_first() -> None:
     assert FALLBACK_MODELS[0].id == "gpt-5.6-sol"
-    assert len(FALLBACK_MODELS) == 12
-    assert len({m.id for m in FALLBACK_MODELS}) == 12
+    assert len(FALLBACK_MODELS) == 58
+    assert len({m.id for m in FALLBACK_MODELS}) == 58
 
 
 def test_fallback_models_include_video_models() -> None:
@@ -28,6 +28,43 @@ def test_fallback_models_include_video_models() -> None:
         "veo-3.1-fast-generate-001",
         "happyhorse-1.0-t2v",
     }
+
+
+def test_fallback_models_include_image_models() -> None:
+    image_ids = {m.id for m in FALLBACK_MODELS if m.type == "image"}
+    assert image_ids == {
+        "gemini-3-pro-image",
+        "nano-banana",
+        "nano-banana-2",
+        "gpt-image-1-mini",
+        "gpt-image-1.5",
+        "gpt-image-2",
+        "imagen-3.0-generate",
+    }
+    assert all(not m.confirmed for m in FALLBACK_MODELS if m.type == "image")
+
+
+def test_fallback_models_confirmed_flag() -> None:
+    """Só os 12 modelos com HAR real (8 chat + 4 vídeo, do checkpoint
+    original) vêm marcados `confirmed=True` — todo o resto do catálogo
+    (colado da UI, sem id interno visível) é melhor-esforço."""
+
+    confirmed_ids = {m.id for m in FALLBACK_MODELS if m.confirmed}
+    assert confirmed_ids == {
+        "gpt-5.6-sol",
+        "gpt-5.6-luna",
+        "claude-5-sonnet",
+        "gemini-3.6-flash",
+        "glm-5.1",
+        "nvidia.nemotron-nano-12b-v2",
+        "amazon.nova-pro-v1:0",
+        "us.meta.llama4-scout-17b-instruct-v1:0",
+        "sora-2",
+        "veo-3.1-generate-001",
+        "veo-3.1-fast-generate-001",
+        "happyhorse-1.0-t2v",
+    }
+    assert sum(1 for m in FALLBACK_MODELS if not m.confirmed) == 46
 
 
 def test_claude_uses_generic_route_but_bedrock_payload_endpoint() -> None:
@@ -64,12 +101,25 @@ async def test_list_models_filters_by_provider_and_endpoint(settings) -> None:
     google_models = await catalog.list_models(provider="google")
     assert {m.id for m in google_models} == {
         "gemini-3.6-flash",
+        "gemini-3.1-pro-preview",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-2.5-pro",
+        "gemini-3-pro-image",
+        "nano-banana",
+        "nano-banana-2",
+        "imagen-3.0-generate",
         "veo-3.1-generate-001",
         "veo-3.1-fast-generate-001",
     }
 
     bedrock_models = await catalog.list_models(endpoint="bedrock")
-    assert [m.id for m in bedrock_models] == ["claude-5-sonnet"]
+    assert {m.id for m in bedrock_models} == {
+        "claude-5-sonnet",
+        "claude-4.6-sonnet",
+        "claude-4.5-sonnet",
+        "claude-4.6-opus",
+    }
 
 
 @pytest.mark.asyncio
@@ -106,6 +156,34 @@ async def test_remote_catalog_is_used_when_configured(settings) -> None:
     assert models[0].id == "custom-model"
     # rota derivada via KNOWN_ROUTES (provedor desconhecido -> generic)
     assert models[0].route == "/api/ask/generic"
+    # Sem `confirmed` no payload remoto: assume True (fonte é o próprio
+    # servidor, não uma convenção de nomenclatura inferida por nós).
+    assert models[0].confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_remote_catalog_respects_explicit_confirmed_false(settings) -> None:
+    remote_payload = {
+        "models": [
+            {
+                "id": "unverified-model",
+                "name": "Unverified Model",
+                "provider": "custom-vendor",
+                "payload_endpoint": "custom-vendor",
+                "type": "chat",
+                "confirmed": False,
+            }
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=remote_payload)
+
+    settings.models_url = "https://example.com/models.json"
+    catalog = ModelCatalog(settings, transport=httpx.MockTransport(handler))
+
+    models = await catalog.models()
+    assert models[0].confirmed is False
 
 
 @pytest.mark.asyncio

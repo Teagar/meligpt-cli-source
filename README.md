@@ -298,7 +298,7 @@ guarda os dois separadamente (`route` vs `payload_endpoint`) para lidar
 com isso.
 
 ```bash
-meligpt models                    # lista todo o catálogo
+meligpt models                    # lista todo o catálogo, agrupado por GERAL/IMAGEM/VÍDEO
 meligpt models --provider google  # filtra por provedor
 meligpt providers                 # lista as rotas conhecidas
 
@@ -323,26 +323,39 @@ Rotas HTTP via API:
 
 Sem `MELIGPT_MODELS_URL` configurado (não há evidência de HAR para uma
 URL de catálogo remoto real — fica puramente opcional), o servidor usa um
-catálogo local fixo com os 12 modelos confirmados/inferidos manualmente
-(8 de chat + 4 de vídeo — ver seção "Modelos de vídeo" abaixo). Ver
-`.env.example` para `MELIGPT_MODELS_URL` / `MELIGPT_MODELS_CACHE_SECONDS`.
+catálogo local fixo, dividido em três categorias
+(`meligpt models` agrupa a saída assim):
 
-**Memória de conversa:** o MeliGPT não expõe `conversationId` persistente
-para este adaptador, mas o OpenClaude (como qualquer cliente
-OpenAI-compatible padrão) reenvia o histórico completo em `messages` a
-cada requisição. Por isso o adaptador serializa a conversa inteira num
-único prompt de texto a cada turno — sem precisar guardar estado no
-servidor, o modelo remoto passa a "lembrar" o que foi dito antes.
+- **GERAL (chat)** — 47 modelos.
+- **IMAGEM** — 7 modelos.
+- **VÍDEO** — 4 modelos.
 
-**Contexto automático de arquivos:** antes de cada turno, o adaptador
-lista o sandbox local (`ls` recursivo) e injeta um snapshot compacto dos
-caminhos existentes junto com o prompt — assim o modelo já sabe quais
-arquivos existem sem que o usuário precise pedir `ls` manualmente
-primeiro. A descoberta automática por nome de arquivo (pensada para
-prompts curtos digitados por humano) continua desligada nesse endpoint,
-já que rodar sobre uma transcrição inteira gerava avisos de "arquivo não
-encontrado" falsos; referências explícitas `/files/...` continuam
-funcionando normalmente.
+Ver `.env.example` para `MELIGPT_MODELS_URL` / `MELIGPT_MODELS_CACHE_SECONDS`.
+
+### IDs confirmados vs. melhor-esforço
+
+Só **12** desses modelos (8 de chat + os 4 de vídeo) foram confirmados por
+HAR real — uma chamada de verdade, observada ao vivo, que funcionou. O
+resto do catálogo veio colado da UI do MeliGPT (nome + provedor visíveis
+no seletor), sem o id interno usado no payload — então o id de cada um
+foi **inferido** pelo padrão observado nos 12 confirmados (nome em
+minúsculas, espaços viram hífen), com duas exceções onde dá pra usar algo
+mais confiável que um chute: os modelos Bedrock (`amazon.nova-*`,
+`us.meta.llama*`) seguem o formato de id oficial e público da AWS, e
+`gpt-oss-120b`/`gpt-oss-20b` são os nomes públicos reais dos modelos
+open-weight da OpenAI.
+
+Todo modelo inferido sai marcado `confirmed: false` — em `meligpt models`
+(`[NÃO CONFIRMADO]`) e em `GET /v1/models`/`GET /v1/models/{id}` (campo
+`"confirmed"`, extensão fora do padrão OpenAI que o OpenClaude ignora).
+
+**Se um desses falhar** (o backend do MeliGPT devolve erro de "modelo
+desconhecido" ou similar), é só corrigir a string do id em
+`src/meligpt/catalog.py` — é o único lugar que precisa mudar, não tem id
+espalhado em mais nenhum arquivo. Se puder, mande um HAR da chamada que
+funcionou (mesmo processo usado pra confirmar os 12 originais e o fork:
+`Network` do DevTools → filtra por `/api/ask/` → botão direito → "Save
+all as HAR") pra eu marcar como `confirmed: true` de vez.
 
 ## Configuração
 

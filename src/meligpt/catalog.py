@@ -86,6 +86,15 @@ class ModelInfo(BaseModel):
 
     type: ModelType = "chat"
 
+    confirmed: bool = True
+    """``True`` quando o id foi confirmado por HAR real (uma
+    geração/chamada bem-sucedida observada ao vivo). ``False`` marca um
+    id inferido pelo padrão de nomenclatura observado nos modelos
+    confirmados (minúsculas, hífens) — melhor esforço, não testado ao
+    vivo. Se um desses falhar com erro do backend (ex.: modelo
+    desconhecido), corrija a string em :mod:`meligpt.catalog` e, se
+    possível, confirme por HAR."""
+
 
 class ProviderInfo(BaseModel):
     """Uma entrada de :data:`KNOWN_ROUTES`, exposta via ``GET /v1/providers``."""
@@ -107,6 +116,7 @@ def _model(
     payload_endpoint: str,
     *,
     type: ModelType = "chat",
+    confirmed: bool = True,
 ) -> ModelInfo:
     return ModelInfo(
         id=model_id,
@@ -115,6 +125,7 @@ def _model(
         route=_route_for(payload_endpoint),
         payload_endpoint=payload_endpoint,
         type=type,
+        confirmed=confirmed,
     )
 
 
@@ -122,8 +133,9 @@ def _model(
 #: anterior). ``gpt-5.6-sol`` fica primeiro de propósito: é o default de
 #: ``Settings.model`` e o comportamento pré-catálogo de ``GET /v1/models``
 #: (usado por integrações existentes, ex. OpenClaude) já esperava vê-lo
-#: como primeiro item da lista.
-_CHAT_MODELS: tuple[ModelInfo, ...] = (
+#: como primeiro item da lista. NÃO MEXER nestas 8 entradas — cada uma tem
+#: HAR de uma chamada real bem-sucedida.
+_CHAT_MODELS_CONFIRMED: tuple[ModelInfo, ...] = (
     _model("gpt-5.6-sol", "GPT-5.6 Sol", "openAI", "openAI"),
     _model("gpt-5.6-luna", "GPT-5.6 Luna", "openAI", "openAI"),
     _model("claude-5-sonnet", "Claude 5 Sonnet", "anthropic", "bedrock"),
@@ -136,6 +148,122 @@ _CHAT_MODELS: tuple[ModelInfo, ...] = (
         "Llama 4 Scout 17B Instruct",
         "meta",
         "meta",
+    ),
+)
+
+#: Resto do catálogo visto no seletor de modelo do MeliGPT (colado pelo
+#: usuário em 2026-08-15: nome + rota + provedor, sem o id interno usado
+#: no payload). SEM HAR — os ids abaixo são inferidos mecanicamente a
+#: partir do padrão observado nos 8 confirmados acima (nome em
+#: minúsculas, espaços viram hífen), com duas exceções onde dá pra usar
+#: um id real e público em vez de adivinhar:
+#: - Bedrock (``amazon.*``/``us.meta.*``): segue o formato de id oficial
+#:   da AWS para Nova/Llama, documentado publicamente — não é chute.
+#: - ``gpt-oss-120b``/``gpt-oss-20b``: nomes públicos reais dos modelos
+#:   open-weight da OpenAI.
+#: Todos marcados ``confirmed=False``. Teste com
+#: ``meligpt chat --model <id> "oi"`` (ou pelo OpenClaude,
+#: ``/model <id>``) — se o backend devolver erro de modelo desconhecido,
+#: corrija a string aqui (é o único lugar que precisa mudar) e, se
+#: puder, mande um HAR da chamada certa pra eu marcar como confirmado.
+_CHAT_MODELS_UNCONFIRMED: tuple[ModelInfo, ...] = (
+    # --- openAI ---
+    _model("gpt-5.6-terra", "GPT-5.6 Terra", "openAI", "openAI", confirmed=False),
+    _model("gpt-5.5-pro", "GPT-5.5 Pro", "openAI", "openAI", confirmed=False),
+    _model("gpt-5.5", "GPT-5.5", "openAI", "openAI", confirmed=False),
+    _model("gpt-5.4", "GPT-5.4", "openAI", "openAI", confirmed=False),
+    _model("gpt-5.4-mini", "GPT-5.4 Mini", "openAI", "openAI", confirmed=False),
+    _model("gpt-5.4-nano", "GPT-5.4 Nano", "openAI", "openAI", confirmed=False),
+    _model("gpt-5.3-codex", "GPT-5.3 Codex", "openAI", "openAI", confirmed=False),
+    _model("gpt-5.2", "GPT-5.2", "openAI", "openAI", confirmed=False),
+    _model("gpt-5", "GPT-5", "openAI", "openAI", confirmed=False),
+    _model("gpt-5-mini", "GPT-5 Mini", "openAI", "openAI", confirmed=False),
+    _model("gpt-5-thinking", "GPT-5 Thinking", "openAI", "openAI", confirmed=False),
+    _model("gpt-5-nano", "GPT-5 Nano", "openAI", "openAI", confirmed=False),
+    _model("gpt-oss-120b", "GPT-OSS 120B", "openAI", "openAI", confirmed=False),
+    _model("gpt-oss-20b", "GPT-OSS 20B", "openAI", "openAI", confirmed=False),
+    # --- google ---
+    _model("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", "google", "google", confirmed=False),
+    _model("gemini-3.5-flash", "Gemini 3.5 Flash", "google", "google", confirmed=False),
+    _model("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite", "google", "google", confirmed=False),
+    _model("gemini-2.5-pro", "Gemini 2.5 Pro", "google", "google", confirmed=False),
+    # --- nova (Bedrock, ids reais/públicos da AWS) ---
+    _model("amazon.nova-lite-v1:0", "Amazon Nova Lite", "nova", "nova", confirmed=False),
+    _model("amazon.nova-premier-v1:0", "Amazon Nova Premier", "nova", "nova", confirmed=False),
+    # --- anthropic ---
+    _model("claude-4.6-sonnet", "Claude Sonnet 4.6", "anthropic", "bedrock", confirmed=False),
+    _model("claude-4.5-sonnet", "Claude Sonnet 4.5", "anthropic", "bedrock", confirmed=False),
+    _model("claude-4.6-opus", "Opus 4.6", "anthropic", "bedrock", confirmed=False),
+    # --- alibaba ---
+    _model("qwen3.8-max", "Qwen3.8 Max", "alibaba", "alibaba", confirmed=False),
+    _model("glm-5.2", "GLM-5.2", "alibaba", "alibaba", confirmed=False),
+    _model("qwen3-coder-next", "Qwen3 Coder Next", "alibaba", "alibaba", confirmed=False),
+    _model("qwen3-32b-dense", "Qwen3 32B (dense)", "alibaba", "alibaba", confirmed=False),
+    _model("qwen3-next-80b-a3b", "Qwen3 Next 80B A3B", "alibaba", "alibaba", confirmed=False),
+    _model("qwen-3.5-plus", "Qwen 3.5 Plus", "alibaba", "alibaba", confirmed=False),
+    _model("qwen-3-thinking", "Qwen 3 Thinking", "alibaba", "alibaba", confirmed=False),
+    _model("qwen-3-coder", "Qwen 3 Coder", "alibaba", "alibaba", confirmed=False),
+    # --- nvidia ---
+    _model(
+        "nvidia.nemotron-nano-3-30b-a3b",
+        "NVIDIA Nemotron Nano 3 30B (A3B)",
+        "nvidia",
+        "nvidia",
+        confirmed=False,
+    ),
+    # --- meta (Bedrock, id real/público da AWS) ---
+    _model(
+        "us.meta.llama3-2-90b-instruct-v1:0",
+        "Llama 3.2 90B",
+        "meta",
+        "meta",
+        confirmed=False,
+    ),
+    # --- grok / xAI ---
+    _model("grok-4.3", "Grok 4.3", "grok", "grok", confirmed=False),
+    # --- deepseek ---
+    _model("deepseek-v4-pro", "DeepSeek V4 Pro", "deepseek", "deepseek", confirmed=False),
+    _model("deepseek-v4-flash", "DeepSeek V4 Flash", "deepseek", "deepseek", confirmed=False),
+    _model("deepseek-v3.2", "DeepSeek V3.2", "deepseek", "deepseek", confirmed=False),
+    # --- mistral ---
+    _model("mistral-large", "Mistral Large", "mistral", "mistral", confirmed=False),
+    _model("mistral-small-3.1", "Mistral Small 3.1", "mistral", "mistral", confirmed=False),
+)
+
+_CHAT_MODELS: tuple[ModelInfo, ...] = _CHAT_MODELS_CONFIRMED + _CHAT_MODELS_UNCONFIRMED
+
+#: Modelos de IMAGEM vistos no seletor (mesma origem/ressalva que
+#: ``_CHAT_MODELS_UNCONFIRMED`` — sem HAR de uma geração de imagem
+#: bem-sucedida, então todos ``confirmed=False``). Ver
+#: ``docs/architecture.md`` sobre como confirmar um id novo.
+_IMAGE_MODELS: tuple[ModelInfo, ...] = (
+    _model(
+        "gemini-3-pro-image",
+        "Gemini 3 Pro Image",
+        "google",
+        "google",
+        type="image",
+        confirmed=False,
+    ),
+    _model("nano-banana", "Nano Banana", "google", "google", type="image", confirmed=False),
+    _model("nano-banana-2", "Nano Banana 2", "google", "google", type="image", confirmed=False),
+    _model(
+        "gpt-image-1-mini",
+        "GPT Image 1 Mini",
+        "openAI",
+        "openAI",
+        type="image",
+        confirmed=False,
+    ),
+    _model("gpt-image-1.5", "GPT Image 1.5", "openAI", "openAI", type="image", confirmed=False),
+    _model("gpt-image-2", "GPT Image 2", "openAI", "openAI", type="image", confirmed=False),
+    _model(
+        "imagen-3.0-generate",
+        "Imagen 3.0 Generate",
+        "google",
+        "google",
+        type="image",
+        confirmed=False,
     ),
 )
 
@@ -162,7 +290,7 @@ _VIDEO_MODELS: tuple[ModelInfo, ...] = (
     _model("happyhorse-1.0-t2v", "HappyHorse 1.0", "alibaba", "alibaba", type="video"),
 )
 
-FALLBACK_MODELS: tuple[ModelInfo, ...] = _CHAT_MODELS + _VIDEO_MODELS
+FALLBACK_MODELS: tuple[ModelInfo, ...] = _CHAT_MODELS + _IMAGE_MODELS + _VIDEO_MODELS
 
 FALLBACK_PROVIDERS: tuple[ProviderInfo, ...] = tuple(
     ProviderInfo(id=provider, route=route) for provider, route in KNOWN_ROUTES.items()
@@ -190,6 +318,7 @@ def _parse_remote_model(entry: dict[str, Any]) -> ModelInfo | None:
             route=route,
             payload_endpoint=payload_endpoint,
             type=model_type,
+            confirmed=bool(entry.get("confirmed", True)),
         )
     except (TypeError, ValueError):
         return None
