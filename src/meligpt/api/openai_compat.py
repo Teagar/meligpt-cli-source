@@ -46,8 +46,10 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.responses import JSONResponse
 
+from meligpt.catalog import ModelCatalog
 from meligpt.chat.service import (
     ChatFinished,
+    GeneratedMedia,
     MirroredToolResult,
     TextChunk,
     WarningMessage,
@@ -69,6 +71,10 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
+    media_dir: str | None = None
+    """Extensão fora do padrão OpenAI: onde salvar imagens/vídeos gerados
+    neste turno. Clientes que não conhecem o campo simplesmente não o
+    mandam — sem isso, usa o destino padrão."""
 
 
 def _build_transcript_prompt(
@@ -176,22 +182,88 @@ def _sse_chunk(
     return json.dumps(payload)
 
 
-def build_openai_router(settings: Settings, registry: ToolRegistry) -> APIRouter:
+def build_openai_router(
+    settings: Settings, registry: ToolRegistry, catalog: ModelCatalog | None = None
+) -> APIRouter:
     local_router = APIRouter()
+    catalog = catalog or ModelCatalog(settings)
 
     @local_router.get("/v1/models")
-    async def list_models() -> JSONResponse:
+    async def list_models(provider: str | None = None, endpoint: str | None = None) -> JSONResponse:
+        """Lista o catálogo de modelos multi-provedor.
+
+        ``?provider=`` filtra pelo vendor lógico (ex.: ``google``,
+        ``anthropic``); ``?endpoint=`` filtra pelo valor real do campo
+        ``endpoint`` do payload (ex.: ``bedrock``) — que pode diferir do
+        provider (ver :mod:`meligpt.catalog`).
+        """
+
+        models = await catalog.list_models(provider=provider, endpoint=endpoint)
         return JSONResponse(
             {
                 "object": "list",
                 "data": [
-                    {"id": settings.model, "object": "model", "created": 0, "owned_by": "meligpt"}
+                    {
+                        "id": m.id,
+                        "object": "model",
+                        "created": 0,
+                        "owned_by": m.provider,
+                        "provider": m.provider,
+                        "endpoint": m.payload_endpoint,
+                        "route": m.route,
+                        "type": m.type,
+                    }
+                    for m in models
                 ],
             }
         )
 
+    @local_router.get("/v1/models/{model_id}")
+    async def get_model(model_id: str) -> JSONResponse:
+        model = await catalog.get(model_id)
+        if model is None:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "success": False,
+                    "error": f"modelo desconhecido: {model_id}",
+                    "code": "model_not_found",
+                },
+            )
+        return JSONResponse(
+            {
+                "id": model.id,
+                "object": "model",
+                "created": 0,
+                "owned_by": model.provider,
+                "provider": model.provider,
+                "endpoint": model.payload_endpoint,
+                "route": model.route,
+                "type": model.type,
+            }
+        )
+
+    @local_router.get("/v1/providers")
+    async def list_providers() -> JSONResponse:
+        providers = await catalog.list_providers()
+        return JSONResponse(
+            {"object": "list", "data": [{"id": p.id, "route": p.route} for p in providers]}
+        )
+
     @local_router.post("/v1/chat/completions")
     async def chat_completions(body: ChatCompletionRequest):
+        # `body.model` costuma ser um rótulo genérico (ex.: "meligpt", o
+        # default do OpenClaude) e não necessariamente um id do catálogo —
+        # só troca de modelo/rota quando ele bate com uma entrada real,
+        # preservando o comportamento padrão (Settings.model) caso
+        # contrário. Modelos de qualquer tipo (chat/image/video) são
+        # aceitos aqui: o OpenClaude (e qualquer outro cliente
+        # OpenAI-compatible) só fala com este endpoint, então bloquear
+        # vídeo/imagem aqui os deixaria inacessíveis na prática — a
+        # resposta (texto ou mídia baixada via meligpt.media) é tratada
+        # igual independente do tipo do modelo selecionado.
+        model_info = await catalog.get(body.model)
+
         file_context = await _build_directory_snapshot(settings)
         prompt = _build_transcript_prompt(body.messages, file_context=file_context)
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
@@ -205,11 +277,16 @@ def build_openai_router(settings: Settings, registry: ToolRegistry) -> APIRouter
                     registry=registry,
                     discovery_enabled=False,
                     auto_files=True,
+                    model_info=model_info,
+                    media_dir=body.media_dir,
                 ):
                     if isinstance(event, TextChunk):
                         parts.append(event.text)
                     elif isinstance(event, MirroredToolResult):
                         parts.append(f"\n[{event.name}] {event.message}\n")
+                    elif isinstance(event, GeneratedMedia):
+                        label = "vídeo gerado" if event.media_type == "video" else "imagem gerada"
+                        parts.append(f"\n![{label}]({event.virtual_path})\n")
                     elif isinstance(event, WarningMessage):
                         parts.append(f"\n[aviso] {event.message}\n")
             except MeliGPTError as exc:
@@ -246,11 +323,16 @@ def build_openai_router(settings: Settings, registry: ToolRegistry) -> APIRouter
                     registry=registry,
                     discovery_enabled=False,
                     auto_files=True,
+                    model_info=model_info,
+                    media_dir=body.media_dir,
                 ):
                     if isinstance(event, TextChunk):
                         text = event.text
                     elif isinstance(event, MirroredToolResult):
                         text = f"\n[{event.name}] {event.message}\n"
+                    elif isinstance(event, GeneratedMedia):
+                        label = "vídeo gerado" if event.media_type == "video" else "imagem gerada"
+                        text = f"\n![{label}]({event.virtual_path})\n"
                     elif isinstance(event, WarningMessage):
                         text = f"\n[aviso] {event.message}\n"
                     elif isinstance(event, ChatFinished):

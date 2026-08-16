@@ -98,6 +98,19 @@ detalhes):
 | `./x` | `x` |
 | `x` | `x` |
 
+**Criação automática de diretórios intermediários** (`write_file`
+apenas, via `create_missing_dirs=True` em `resolve_secure`): confirmado
+em uso real que o modelo remoto costuma informar um caminho absoluto que
+reflete o cwd "de host" relatado pelo cliente (ex.: `/tmp/tmp.xxxx/`),
+não consciente de que a raiz `/` aqui é virtual. Exigir que cada
+subpasta já exista antes de escrever um arquivo não é o comportamento
+esperado de um `write_file` de agente de código — a maioria das
+implementações equivalentes (incluindo as ferramentas nativas de agentes
+de coding) já faz `mkdir -p` implícito. A criação respeita as mesmas
+garantias de segurança: cada componente continua sendo resolvido via
+`dir_fd`/`O_NOFOLLOW`, então não é possível criar diretório atravessando
+um symlink nem escapar da raiz.
+
 ## SSE, streaming e 401
 
 `clients/meligpt_http.py` usa `httpx.AsyncClient` em modo streaming
@@ -116,6 +129,27 @@ No servidor (`api/routes.py`), a desconexão do cliente é detectada via
 o cancelamento do `async generator` do `httpx` fecha o cliente HTTP
 subjacente automaticamente (`async with`).
 
+### Deduplicação de eventos `on_run_step_completed` (tool calls)
+
+Confirmado via HAR real contra o backend (modelo Claude/bedrock): o
+MeliGPT emite `on_run_step_completed` **mais de uma vez** para a mesma
+tool call — a primeira ocorrência traz `tool_call.args` completo (às
+vezes como string JSON), e uma segunda ocorrência de "fechamento" chega
+com o mesmo `id`, mas **sem** o campo `args`/`arguments`. `chat/service.py`
+mantém as tool calls vistas num dicionário por `id`; sem tratamento
+especial, a segunda ocorrência sobrescreveria a primeira com argumentos
+vazios, e toda ferramenta espelhada falharia com "argumento inválido"
+mesmo o modelo tendo enviado tudo certo.
+
+A regra aplicada: um evento novo só substitui um evento já visto para o
+mesmo `id` se ele tiver argumentos não vazios, ou se o evento já visto
+também não tinha argumentos. Isso preserva a primeira ocorrência "rica"
+e ignora ocorrências posteriores vazias, sem nunca perder uma atualização
+legítima. Ver `_has_arguments`/`_coerce_arguments` em `chat/service.py` e
+o teste de regressão
+`tests/integration/test_chat_service.py::test_run_chat_survives_duplicate_completed_event_without_args`,
+que reproduz o payload real capturado.
+
 ## Concorrência
 
 - Toda a orquestração de rede é `asyncio` nativo (`httpx`, `FastAPI`,
@@ -129,6 +163,41 @@ subjacente automaticamente (`async with`).
 - Não há estado global mutável compartilhado entre requisições no
   servidor: cada chamada a `run_chat()` cria seu próprio
   `TokenManager`/`MeliGPTClient`.
+
+## Modo passagem direta (`MELIGPT_FILES_DIR=/`)
+
+Cenário real que motivou isso: quando `meligpt serve` roda no mesmo
+dispositivo que o cliente (ex.: OpenClaude apontando
+`OPENAI_BASE_URL=http://localhost:8080/v1`), o modelo remoto reporta um
+cwd "de host" real (ex.: `/tmp/tmp.v2Ugw0ltmU`, o diretório onde o
+usuário efetivamente digitou `openclaude`). Com o sandbox padrão, um
+`file_path` como `/tmp/tmp.v2Ugw0ltmU/index.js` é tratado como caminho
+*virtual* (a barra inicial é a raiz virtual, não a raiz real do SO — ver
+seção acima), então o arquivo é gravado dentro do sandbox isolado, nunca
+na pasta real onde o usuário está — resultado observado: `write_file`
+"funciona" (retorna sucesso), mas o arquivo nunca aparece onde o usuário
+espera.
+
+Como o servidor e o cliente estão na mesma máquina, a correção é
+literal: se `MELIGPT_FILES_DIR` for exatamente `/`, a resolução de
+caminho vigente (`/x` → `x` relativo à raiz) produz `/` + `x` = `x` — ou
+seja, o caminho virtual passa a *ser* o caminho real do host, palavra por
+palavra. Nenhuma lógica nova de resolução foi necessária; o mesmo
+`resolve_secure`/`dir_fd`/`O_NOFOLLOW` que protege o sandbox isolado
+continua valendo — a única coisa que muda é *onde* a raiz aponta.
+
+**Isso é uma mudança de modelo de ameaça, não um bug a ser sempre
+corrigido por padrão**: um sandbox isolado é o comportamento correto
+quando o servidor MeliGPT é remoto de verdade (o caso original do
+projeto Bash). Por isso a flag exige confirmação dupla
+(`MELIGPT_FILES_DIR=/` **e** `MELIGPT_ALLOW_FULL_FILESYSTEM_ACCESS=true`)
+e falha rápido — na criação do app (`create_app`) e no início da CLI, não
+apenas na primeira requisição — se só uma das duas estiver presente. A
+lista de diretórios excluídos de varreduras recursivas
+(`filesystem/exclusions.py`) também foi ampliada para incluir
+pseudo-sistemas de arquivo do host (`proc`, `sys`, `dev`, `boot`),
+reduzindo o risco de uma varredura recursiva (`ls -r`, `glob`, `grep`)
+tentar descer neles quando a raiz é `/`.
 
 ## Trade-offs registrados
 

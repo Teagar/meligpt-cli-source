@@ -5,6 +5,11 @@ Formato observado (preservado do parsing feito em
 
 - Delta de texto: ``{"event": "on_message_delta", "data": {"delta": {"content": [{"type": "text", "text": "..."}]}}}``
 - Tool call completada: ``{"event": "on_run_step_completed", "data": {"result": {"type": "tool_call", "tool_call": {...}}}}``
+- Mensagem final/completa (sem deltas): um evento cujo payload traz
+  ``responseMessage.text`` ou ``responseMessage.content[].text`` — visto
+  em alguns backends estilo LibreChat como alternativa (ou complemento) ao
+  streaming por delta. Reconhecido independente do nome de ``event``,
+  em ``data.responseMessage`` ou ``responseMessage`` no nível raiz.
 - Fim do stream: linha literal ``data: [DONE]``.
 """
 
@@ -28,6 +33,18 @@ class TextDeltaEvent:
 
 
 @dataclass(frozen=True)
+class FinalTextEvent:
+    """Texto final/completo (não incremental), visto em
+    ``responseMessage.text`` / ``responseMessage.content[].text``. A
+    camada de serviço (:mod:`meligpt.chat.service`) só usa isso quando
+    nenhum ``TextDeltaEvent`` chegou antes, para não duplicar a resposta
+    quando o backend manda os dois.
+    """
+
+    text: str
+
+
+@dataclass(frozen=True)
 class DoneEvent:
     pass
 
@@ -39,10 +56,34 @@ class RawEvent:
     payload: dict[str, Any]
 
 
-ChatEvent = TextDeltaEvent | ToolCallEvent | DoneEvent | RawEvent
+ChatEvent = TextDeltaEvent | ToolCallEvent | FinalTextEvent | DoneEvent | RawEvent
+
+
+def _extract_response_message_text(response_message: dict[str, Any]) -> str:
+    text = response_message.get("text")
+    if isinstance(text, str) and text:
+        return text
+    parts = response_message.get("content") or []
+    if isinstance(parts, list):
+        return "".join(
+            part.get("text", "")
+            for part in parts
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return ""
 
 
 def parse_sse_data(data: dict[str, Any]) -> ChatEvent:
+    response_message = data.get("responseMessage")
+    if not isinstance(response_message, dict):
+        nested_data = data.get("data")
+        if isinstance(nested_data, dict):
+            response_message = nested_data.get("responseMessage")
+    if isinstance(response_message, dict):
+        text = _extract_response_message_text(response_message)
+        if text:
+            return FinalTextEvent(text=text)
+
     event_type = data.get("event")
 
     if event_type == "on_message_delta":

@@ -11,6 +11,7 @@ import sys
 
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 from rich.status import Status
 from rich.text import Text
@@ -20,25 +21,25 @@ _stderr = Console(stderr=True)
 
 
 def info(message: str) -> None:
-    _stderr.print(f"[dim]›[/dim] {message}")
+    _stderr.print(f"[dim]›[/dim] {escape(message)}")
 
 
 def warning(message: str) -> None:
-    _stderr.print(f"[yellow]⚠ {message}[/yellow]")
+    _stderr.print(f"[yellow]⚠ {escape(message)}[/yellow]")
 
 
 def error(message: str) -> None:
-    _stderr.print(f"[bold red]Erro:[/bold red] {message}")
+    _stderr.print(f"[bold red]Erro:[/bold red] {escape(message)}")
 
 
 def tool_result(name: str, success: bool, message: str) -> None:
     icon = "[green]✓[/green]" if success else "[red]✗[/red]"
-    _stderr.print(f"{icon} [bold]{name}[/bold]")
+    _stderr.print(f"{icon} [bold]{escape(name)}[/bold]")
     _stderr.print(Text(message, style="dim"), soft_wrap=True)
 
 
 def header(model: str) -> None:
-    _stderr.print(Panel.fit(f"MeliGPT CLI · [bold]{model}[/bold]", border_style="cyan"))
+    _stderr.print(Panel.fit(f"MeliGPT CLI · [bold]{escape(model)}[/bold]", border_style="cyan"))
 
 
 def sending_status() -> Status:

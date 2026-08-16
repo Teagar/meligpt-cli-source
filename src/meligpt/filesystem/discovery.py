@@ -13,8 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from meligpt.config import Settings
-
-_DEFAULT_EXCLUDED_DIRS = {".git", "node_modules", "__pycache__", ".venv"}
+from meligpt.filesystem.exclusions import DEFAULT_EXCLUDED_DIRS as _DEFAULT_EXCLUDED_DIRS
 
 
 @dataclass(frozen=True)

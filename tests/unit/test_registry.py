@@ -62,6 +62,15 @@ async def test_previously_stub_tools_now_have_real_implementations(name: str, se
 
 
 @pytest.mark.asyncio
+async def test_bash_registered_but_disabled_by_default(settings) -> None:
+    registry = build_default_registry()
+    assert "bash" in registry.names()
+    result = await registry.dispatch("bash", {"command": "echo oi"}, settings)
+    assert result["success"] is False
+    assert result["code"] == "tool_disabled"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_never_leaks_raw_exception(settings, monkeypatch) -> None:
     registry = ToolRegistry()
 

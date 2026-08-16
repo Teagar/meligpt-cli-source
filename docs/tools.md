@@ -1,10 +1,11 @@
 # Ferramentas
 
-11 ferramentas no catálogo (`tools/registry.py`): **8 reais** (`ls`,
+11 ferramentas no catálogo (`tools/registry.py`): **9 reais** (`ls`,
 `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `write_todos`,
-`WebSearch`) e **3 stub** (`parallel`, `task`, `ImageGeneration` —
-interface pronta, sem política/provedor definido, ver
-`docs/architecture.md`).
+`WebSearch`, `bash`) e **3 stub** (`parallel`, `task`, `ImageGeneration`
+— interface pronta, sem política/provedor definido, ver
+`docs/architecture.md`). Note que `bash` é real mas **desligada por
+padrão** por segurança — ver seção própria abaixo.
 
 ---
 
@@ -76,6 +77,13 @@ interface pronta, sem política/provedor definido, ver
 **Erros:** `file_too_large`, `tool_validation_error`,
 `symlink_not_allowed`, `path_traversal`, `tool_execution_error` (o
 arquivo original nunca é corrompido). **Limite:** `MELIGPT_MAX_FILE_SIZE`.
+
+**Cria diretórios intermediários automaticamente** (como `mkdir -p`,
+sempre dentro da raiz sandbox): se o modelo remoto mandar
+`/tmp/tmp.xxxx/index.js` (refletindo um cwd "de host" que o cliente
+informou a ele), as pastas `tmp/tmp.xxxx` são criadas na raiz virtual
+antes de gravar o arquivo — sem isso, toda escrita em subpasta ainda não
+existente falhava com "caminho local não encontrado".
 
 ---
 
@@ -240,6 +248,49 @@ payload sugere LibreChat), o modelo remoto passa a pesquisar a web
 sozinho, sem precisar desta ferramenta local. Como não consigo validar
 isso contra o backend real, trate como experimental e teste com cuidado.
 
+## `bash`
+
+**Finalidade:** executar um comando de shell dentro da raiz sandbox.
+
+> ⚠️ **Desligada por padrão** (`MELIGPT_ENABLE_BASH_TOOL=false`). Ao
+> contrário das outras ferramentas, `bash` não tem sandbox de caminho —
+> é execução de comando real, com o mesmo poder de qualquer processo
+> rodando no container. A fronteira de segurança é o isolamento do
+> próprio Docker (usuário não-root, filesystem read-only fora de
+> `/data` — ver `Dockerfile`). **Só ative isso rodando dentro de um
+> container assim.** Fora de um container isolado, ligar essa
+> ferramenta equivale a dar acesso de shell ao host onde o
+> `meligpt serve` está rodando.
+
+**Entrada:**
+```json
+{ "command": "ls -la && cat package.json" }
+```
+
+**Saída:**
+```json
+{
+  "success": true,
+  "content": "$ ls -la && cat package.json\n(exit code: 0)\n...",
+  "exit_code": 0,
+  "stdout": "...",
+  "stderr": "",
+  "stdout_truncated": false,
+  "stderr_truncated": false
+}
+```
+
+`success: true` significa apenas que o comando **executou** — o
+resultado real está em `exit_code` (o modelo decide o que fazer com um
+exit code != 0, igual um agente de terminal normal faria).
+
+**Erros:** `tool_disabled` (ferramenta desligada — a mensagem já explica
+como ativar), `tool_validation_error` (`command` ausente),
+`tool_execution_error` (timeout ou falha ao iniciar o processo).
+**Limites:** `MELIGPT_BASH_TIMEOUT_SECONDS` (default 30s, mata o processo
+ao estourar) e `MELIGPT_BASH_MAX_OUTPUT_BYTES` (default 200000, por
+stream).
+
 ## `parallel` — *não implementado*
 
 Executaria ferramentas independentes concorrentemente. O executor
@@ -253,18 +304,20 @@ Delegaria uma tarefa isolada a um subagente (contexto isolado, limite de
 profundidade). Sem conceito de subagente em nenhuma parte do projeto
 original. Sempre retorna `tool_not_implemented`.
 
-## `WebSearch` — *não implementado*
+## `ImageGeneration` — tool_call client-side *não implementado*, mas geração de imagem funciona
 
-Pesquisaria a web via provedor externo. Nenhum provedor de busca está
-integrado ao MeliGPT original — implementar exigiria uma decisão de
-produto (qual provedor, quais credenciais) fora do escopo desta migração.
-Para habilitar: implemente `clients/web_search.py` e configure
-`MELIGPT_WEB_SEARCH_PROVIDER`.
-
-## `ImageGeneration` — *não implementado*
-
-Geraria/editaria imagens via provedor externo. Mesma observação de
-`WebSearch`.
+A geração de imagem em si acontece do lado do MeliGPT remoto, não como
+algo que o cliente precisa executar. Quando o modelo gera uma imagem, o
+link `/api/media/{userId}/{filename}` (rota confirmada por HAR) aparece
+no texto da resposta, e `chat/service.py` já baixa e salva isso
+automaticamente em `generated-images/` — ver seção "Geração de imagens"
+do README e `src/meligpt/media.py`. Esta ferramenta stub só existe para
+o caso (não confirmado por HAR) de o modelo também emitir um tool_call
+`ImageGeneration` separado esperando uma resposta client-side; se isso
+acontecer, o turno mostra "ferramenta não espelhada: ImageGeneration"
+como aviso informativo — o download da imagem (se houver) já terá
+acontecido de qualquer forma. Sempre retorna `tool_not_implemented` se
+alguém tentar chamá-la diretamente como ferramenta client-side.
 
 ---
 

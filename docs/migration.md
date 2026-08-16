@@ -19,7 +19,10 @@
 | `secrets.env` (formato) | `auth/secrets.py` | mantido o mesmo formato (`ACCESS_TOKEN`, `COOKIE_HEADER`) |
 | — (não existia) | `api/` (servidor HTTP/SSE) | **novo**, pedido explicitamente nesta migração |
 | — (não existia) | `edit_file`, `glob`, `grep`, `write_todos` (implementados de verdade) | **novo, adicionado depois** — operações locais sem depender de nenhum provedor externo, ver `docs/tools.md` |
-| — (não existia) | `tools/stubs/*` (`parallel`, `task`, `WebSearch`, `ImageGeneration`) | continuam sem implementação real — exigiriam política de subagentes ou provedor externo não especificados |
+| — (não existia) | `catalog.py` (catálogo de modelos multi-provedor) + `GET /v1/models`, `/v1/models/{id}`, `/v1/providers`, `meligpt models`/`meligpt providers`, `--model`/`--endpoint` na CLI e em `/v1/chat`/`/v1/chat/completions` | **novo, adicionado depois** — sem contraparte no Bash original |
+| — (não existia) | `media.py` (detecção/download de imagens geradas via `/api/media/...`, confirmado por HAR) + evento `generated_image` em `/v1/chat` e markdown embutido em `/v1/chat/completions` | **novo, adicionado depois** — sem contraparte no Bash original |
+| — (não existia) | `WebSearch` (implementada de verdade, `tools/research/web_search.py`) | **novo, adicionado depois** — sem contraparte no Bash original |
+| — (não existia) | `tools/stubs/*` (`parallel`, `task`, `ImageGeneration` como tool_call client-side — a geração de imagem em si já funciona via `media.py`, ver `docs/tools.md`) | continuam sem implementação client-side — exigiriam política de subagentes ou schema de tool_call não confirmado por HAR |
 
 ## Itens legados (mantidos em `legacy/`)
 
@@ -37,8 +40,26 @@ removidos quando você confirmar que a versão Python atende seu uso diário.
 | `read_file` aceita `offset`/`limit` opcionais | Pedido explícito do prompt de migração (seção 4.5); omitir os dois reproduz exatamente o comportamento antigo (lê o arquivo inteiro, respeitando o limite de tamanho). | Sim, aditivo |
 | Servidor HTTP/SSE (`meligpt serve`) | Não existia no Bash; pedido explicitamente nesta migração. | Novo, não substitui a CLI |
 | `edit_file`, `glob`, `grep`, `write_todos` agora funcionam de verdade (antes eram stub) | Uso real com OpenClaude mostrou que o modelo remoto já chama essas ferramentas espontaneamente | Ferramentas novas, sem regressão — mesma segurança de filesystem das originais |
-| `parallel`, `task`, `WebSearch`, `ImageGeneration` continuam retornando `tool_not_implemented` | Sem contraparte no Bash original e sem provedor/política definidos; ver `docs/tools.md` | Sem regressão — apenas não fazem nada ainda |
+| `parallel`, `task`, `ImageGeneration` (como tool_call client-side) continuam retornando `tool_not_implemented` | Sem contraparte no Bash original e sem provedor/política/schema definidos; ver `docs/tools.md` — a geração de imagem em si funciona via `media.py`, sem depender desta ferramenta | Sem regressão — apenas não fazem nada ainda |
 | Mensagens de erro em português, com `code` estável em inglês (`snake_case`) | Facilita internacionalização futura sem quebrar clientes que só olham `code`. | O *campo* `code` é a interface estável, não o texto de `error` |
+
+## Correções pós-lançamento
+
+| Data | Bug | Correção |
+|---|---|---|
+| 2026-08-10 | Com `MELIGPT_FILES_DIR=/` (modo de acesso total ao filesystem, usado para deixar o OpenClaude editar/criar arquivos reais), baixar uma imagem gerada falhava com `falha ao salvar imagem gerada: não foi possível criar diretório intermediário: generated-images/...` — a pasta de mídia tentava se criar sob a raiz real do filesystem (`/generated-images`), que exige permissão de root. Encontrado via teste end-to-end real com `openclaude -p`. | `Settings.resolved_media_dir()` (nova, default `config_dir/generated-images`) é agora sempre independente de `files_dir` — nunca tenta gravar sob a raiz do filesystem. Ver `tests/integration/test_chat_service.py::test_run_chat_downloads_generated_image_with_full_filesystem_access` (regressão exata do bug) e `tests/unit/test_full_filesystem_guard.py::test_media_dir_independent_of_root_files_dir`. |
+
+## Recursos adicionados depois do lançamento inicial
+
+| Data | O quê | Onde |
+|---|---|---|
+| 2026-08-11 | `meligpt serve --here` / `--files-dir PATH` — restringe o sandbox de arquivos (`ls`/`read_file`/`write_file`/`edit_file`/`glob`/`grep`) à pasta escolhida, com a mesma proteção contra path traversal do resto do projeto. Desliga `allow_full_filesystem_access` automaticamente, mesmo se estava ligado no `.env`. Pedido explícito do usuário para não precisar de acesso total ao filesystem — só à pasta onde o OpenClaude está rodando. `bash` continua sem sandbox de processo (só começa nessa pasta) — documentado com aviso explícito. | `cli.py` |
+| 2026-08-10 | `GeneratedImage` renomeado para `GeneratedMedia` (campo `media_type`: `image`/`video`/`other`, inferido pela extensão) — o mecanismo de download já era agnóstico de extensão, só faltava deixar de nomear tudo como "imagem". | `chat/service.py`, `media.py` |
+| 2026-08-10 | `media_dir` — escolher onde salvar mídia gerada num turno específico (`--media-dir` na CLI, campo `media_dir` em `/v1/chat` e `/v1/chat/completions`). Sem isso, usa o destino padrão (`Settings.resolved_media_dir()`). | `chat/service.py:run_chat`, `cli.py`, `api/routes.py`, `api/openai_compat.py` |
+| 2026-08-10 | 4 modelos de vídeo adicionados ao catálogo local (`sora-2`, `veo-3.1-generate`, `veo-3.1-fast-generate`, `happyhorse-1.0`) — nomes de exibição confirmados pelo usuário, **ids inferidos** (não confirmados por HAR). `resolve_model()` ganhou `require_type=None` para `meligpt chat`/`POST /v1/chat` aceitarem modelos de vídeo/imagem. | `catalog.py` |
+| 2026-08-10 | Correção: `/v1/chat/completions` inicialmente bloqueava modelos não-`chat` (`400 model_type_not_supported`) — mas é o ÚNICO endpoint que clientes OpenAI-compatible como o OpenClaude falam, então isso deixava vídeo/imagem inacessíveis na prática (reproduzido: `openclaude` com `/model sora-2` pedindo vídeo retornava esse erro). Removida a restrição — aceita qualquer tipo de modelo agora, igual `/v1/chat`. Ver `tests/integration/test_openai_compat.py::test_openai_chat_completions_generates_video_end_to_end`. | `api/openai_compat.py` |
+| 2026-08-10 | Correção com evidência de HAR real (`tests/fixtures/video_generation_sse.txt`): (1) `_build_payload` não mandava o campo `"examples"` — presente em toda requisição real, ausência quebrava geração de vídeo (`veo-3.1-generate` retornava Content-Type vazio/inesperado, `sora-2` não respondia). (2) Os ids Veo inferidos estavam errados: o real tem sufixo `-001` (`veo-3.1-fast-generate-001`, confirmado; `veo-3.1-generate-001`, mesmo padrão inferido). Ver `tests/integration/test_video_generation_real_har.py` (roda a resposta SSE real ponta a ponta pelo pipeline inteiro). | `clients/meligpt_http.py`, `catalog.py` |
+| 2026-08-11 | Confirmação por HAR real dos 4 ids de modelo de vídeo de uma vez (gerações bem-sucedidas de `sora-2`, `veo-3.1-generate-001`, `veo-3.1-fast-generate-001`, `happyhorse-1.0-t2v` via `/api/ask/openAI`, `/api/ask/google` (x2) e `/api/ask/generic`). Achado: `happyhorse-1.0-t2v` tinha sufixo `-t2v` que o id inferido anterior (`happyhorse-1.0`) não tinha. `veo-3.1-generate-001` e `sora-2` já estavam corretos. Todos os 4 têm fixture próprio (`tests/fixtures/video_generation_sse_*.txt`) rodando ponta a ponta pelo pipeline real (parametrizado em `test_video_generation_real_har.py`). | `catalog.py` |
 
 ## Plano de rollback
 
