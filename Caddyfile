@@ -1,0 +1,9 @@
+  meligpt.teagar.com.br {
+      @allowed remote_ip 181.216.220.245/32 76.13.161.65/32
+
+      handle @allowed {
+          reverse_proxy meligpt:8080
+      }
+
+      respond "Forbidden" 403
+  }
