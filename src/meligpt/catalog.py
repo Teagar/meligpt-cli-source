@@ -232,11 +232,17 @@ _CHAT_MODELS_UNCONFIRMED: tuple[ModelInfo, ...] = (
 
 _CHAT_MODELS: tuple[ModelInfo, ...] = _CHAT_MODELS_CONFIRMED + _CHAT_MODELS_UNCONFIRMED
 
-#: Modelos de IMAGEM vistos no seletor (mesma origem/ressalva que
-#: ``_CHAT_MODELS_UNCONFIRMED`` — sem HAR de uma geração de imagem
-#: bem-sucedida, então todos ``confirmed=False``). Ver
-#: ``docs/architecture.md`` sobre como confirmar um id novo.
+#: Modelos de IMAGEM vistos no seletor. Cinco dos sete têm HAR real
+#: confirmado (gerações bem-sucedidas de ponta a ponta, 2026-08-15,
+#: `tudo.har`) — inclusive revelando que os ids reais de "Nano Banana" e
+#: "Imagen 3.0 Generate" eram DIFERENTES do que a convenção de
+#: nomenclatura sugeria (não é `nano-banana`, é `gemini-2.5-flash-image`;
+#: não é `imagen-3.0-generate`, é `imagen-3.0-generate-002`) — prova de
+#: que inferir por convenção nem sempre acerta, daí a importância de
+#: confirmar por HAR sempre que possível. "Nano Banana 2" e "Gemini 3 Pro
+#: Image" continuam sem HAR — `confirmed=False`.
 _IMAGE_MODELS: tuple[ModelInfo, ...] = (
+    _model("gemini-2.5-flash-image", "Nano Banana", "google", "google", type="image"),
     _model(
         "gemini-3-pro-image",
         "Gemini 3 Pro Image",
@@ -245,26 +251,11 @@ _IMAGE_MODELS: tuple[ModelInfo, ...] = (
         type="image",
         confirmed=False,
     ),
-    _model("nano-banana", "Nano Banana", "google", "google", type="image", confirmed=False),
     _model("nano-banana-2", "Nano Banana 2", "google", "google", type="image", confirmed=False),
-    _model(
-        "gpt-image-1-mini",
-        "GPT Image 1 Mini",
-        "openAI",
-        "openAI",
-        type="image",
-        confirmed=False,
-    ),
-    _model("gpt-image-1.5", "GPT Image 1.5", "openAI", "openAI", type="image", confirmed=False),
-    _model("gpt-image-2", "GPT Image 2", "openAI", "openAI", type="image", confirmed=False),
-    _model(
-        "imagen-3.0-generate",
-        "Imagen 3.0 Generate",
-        "google",
-        "google",
-        type="image",
-        confirmed=False,
-    ),
+    _model("gpt-image-1-mini", "GPT Image 1 Mini", "openAI", "openAI", type="image"),
+    _model("gpt-image-1.5", "GPT Image 1.5", "openAI", "openAI", type="image"),
+    _model("gpt-image-2", "GPT Image 2", "openAI", "openAI", type="image"),
+    _model("imagen-3.0-generate-002", "Imagen 3.0 Generate", "google", "google", type="image"),
 )
 
 #: Modelos de VÍDEO — nomes de exibição confirmados pelo usuário (visto no
