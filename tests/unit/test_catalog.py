@@ -33,21 +33,44 @@ def test_fallback_models_include_video_models() -> None:
 def test_fallback_models_include_image_models() -> None:
     image_ids = {m.id for m in FALLBACK_MODELS if m.type == "image"}
     assert image_ids == {
+        "gemini-2.5-flash-image",
         "gemini-3-pro-image",
-        "nano-banana",
         "nano-banana-2",
         "gpt-image-1-mini",
         "gpt-image-1.5",
         "gpt-image-2",
-        "imagen-3.0-generate",
+        "imagen-3.0-generate-002",
     }
-    assert all(not m.confirmed for m in FALLBACK_MODELS if m.type == "image")
+    # Confirmados por HAR real (2026-08-15, `tudo.har`) — inclusive
+    # revelando que "Nano Banana" e "Imagen 3.0 Generate" tinham ids
+    # diferentes do que a convenção de nomenclatura sugeria.
+    confirmed_image_ids = {m.id for m in FALLBACK_MODELS if m.type == "image" and m.confirmed}
+    assert confirmed_image_ids == {
+        "gemini-2.5-flash-image",
+        "gpt-image-1-mini",
+        "gpt-image-1.5",
+        "gpt-image-2",
+        "imagen-3.0-generate-002",
+    }
+    # "Nano Banana 2" e "Gemini 3 Pro Image" continuam sem HAR.
+    unconfirmed_image_ids = {m.id for m in FALLBACK_MODELS if m.type == "image" and not m.confirmed}
+    assert unconfirmed_image_ids == {"gemini-3-pro-image", "nano-banana-2"}
+
+
+def test_nano_banana_display_name_maps_to_real_id() -> None:
+    """'Nano Banana' na UI do MeliGPT não é um id literal — é
+    `gemini-2.5-flash-image` por baixo (confirmado por HAR real)."""
+
+    nano_banana = next(m for m in FALLBACK_MODELS if m.name == "Nano Banana")
+    assert nano_banana.id == "gemini-2.5-flash-image"
+    assert nano_banana.confirmed is True
 
 
 def test_fallback_models_confirmed_flag() -> None:
-    """Só os 12 modelos com HAR real (8 chat + 4 vídeo, do checkpoint
-    original) vêm marcados `confirmed=True` — todo o resto do catálogo
-    (colado da UI, sem id interno visível) é melhor-esforço."""
+    """17 modelos com HAR real: os 8 chat + 4 vídeo do checkpoint
+    original, mais 5 de imagem confirmados em 2026-08-15 (`tudo.har`).
+    Todo o resto do catálogo (colado da UI, sem id interno visível) é
+    melhor-esforço."""
 
     confirmed_ids = {m.id for m in FALLBACK_MODELS if m.confirmed}
     assert confirmed_ids == {
@@ -63,8 +86,13 @@ def test_fallback_models_confirmed_flag() -> None:
         "veo-3.1-generate-001",
         "veo-3.1-fast-generate-001",
         "happyhorse-1.0-t2v",
+        "gemini-2.5-flash-image",
+        "gpt-image-1-mini",
+        "gpt-image-1.5",
+        "gpt-image-2",
+        "imagen-3.0-generate-002",
     }
-    assert sum(1 for m in FALLBACK_MODELS if not m.confirmed) == 46
+    assert sum(1 for m in FALLBACK_MODELS if not m.confirmed) == 41
 
 
 def test_claude_uses_generic_route_but_bedrock_payload_endpoint() -> None:
@@ -106,9 +134,9 @@ async def test_list_models_filters_by_provider_and_endpoint(settings) -> None:
         "gemini-3.5-flash-lite",
         "gemini-2.5-pro",
         "gemini-3-pro-image",
-        "nano-banana",
+        "gemini-2.5-flash-image",
         "nano-banana-2",
-        "imagen-3.0-generate",
+        "imagen-3.0-generate-002",
         "veo-3.1-generate-001",
         "veo-3.1-fast-generate-001",
     }

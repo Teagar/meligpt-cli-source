@@ -334,16 +334,22 @@ Ver `.env.example` para `MELIGPT_MODELS_URL` / `MELIGPT_MODELS_CACHE_SECONDS`.
 
 ### IDs confirmados vs. melhor-esforço
 
-Só **12** desses modelos (8 de chat + os 4 de vídeo) foram confirmados por
-HAR real — uma chamada de verdade, observada ao vivo, que funcionou. O
-resto do catálogo veio colado da UI do MeliGPT (nome + provedor visíveis
-no seletor), sem o id interno usado no payload — então o id de cada um
-foi **inferido** pelo padrão observado nos 12 confirmados (nome em
-minúsculas, espaços viram hífen), com duas exceções onde dá pra usar algo
-mais confiável que um chute: os modelos Bedrock (`amazon.nova-*`,
-`us.meta.llama*`) seguem o formato de id oficial e público da AWS, e
-`gpt-oss-120b`/`gpt-oss-20b` são os nomes públicos reais dos modelos
-open-weight da OpenAI.
+**17** desses modelos (8 de chat + 4 de vídeo + 5 de imagem) foram
+confirmados por HAR real — uma chamada de verdade, observada ao vivo, que
+funcionou. O resto do catálogo veio colado da UI do MeliGPT (nome +
+provedor visíveis no seletor), sem o id interno usado no payload — então
+o id de cada um foi **inferido** pelo padrão observado nos confirmados
+(nome em minúsculas, espaços viram hífen), com duas exceções onde dá pra
+usar algo mais confiável que um chute: os modelos Bedrock
+(`amazon.nova-*`, `us.meta.llama*`) seguem o formato de id oficial e
+público da AWS, e `gpt-oss-120b`/`gpt-oss-20b` são os nomes públicos
+reais dos modelos open-weight da OpenAI.
+
+**A inferência por convenção erra às vezes** — prova real (HAR de
+2026-08-15, `tudo.har`): "Nano Banana" não é `nano-banana`, é
+`gemini-2.5-flash-image`; "Imagen 3.0 Generate" não é
+`imagen-3.0-generate`, falta o sufixo `-002` real
+(`imagen-3.0-generate-002`). Os dois já estão corrigidos no catálogo.
 
 Todo modelo inferido sai marcado `confirmed: false` — em `meligpt models`
 (`[NÃO CONFIRMADO]`) e em `GET /v1/models`/`GET /v1/models/{id}` (campo
@@ -357,25 +363,26 @@ funcionou (mesmo processo usado pra confirmar os 12 originais e o fork:
 `Network` do DevTools → filtra por `/api/ask/` → botão direito → "Save
 all as HAR") pra eu marcar como `confirmed: true` de vez.
 
-### Modelos de imagem "dedicados" — status conhecido: quebrados
+### Modelos de imagem "dedicados"
 
-Confirmado ao vivo (2026-08-15): `nano-banana`, `nano-banana-2`,
-`gemini-3-pro-image` e `imagen-3.0-generate` retornam `200 OK` sem
-`Content-Type` e corpo vazio — não é um id "desconhecido" comum, é um
-formato de requisição diferente do que usamos para chat/vídeo, que ainda
-não temos evidência de HAR pra implementar direito.
+Confirmados por HAR real (2026-08-15, `tudo.har`) — geração de ponta a
+ponta funcionando: `gemini-2.5-flash-image` ("Nano Banana"),
+`gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2` e
+`imagen-3.0-generate-002` ("Imagen 3.0 Generate"). Todos usam a mesma
+rota `/api/ask/<endpoint>` e o mesmo formato de payload do chat/vídeo —
+o problema anterior era puramente id errado, não formato de requisição.
 
-**Não é um bloqueio pra gerar imagem hoje**: qualquer modelo de CHAT
-normal (ex.: `gpt-5.6-sol`) já gera imagem funcionando de ponta a ponta
-— o modelo aciona uma tool call `ImageGeneration` do lado do MeliGPT, e
-o link `/api/media/...` da imagem é detectado e baixado automaticamente
-(mesma lógica usada pros vídeos). O aviso `ferramenta não espelhada:
-ImageGeneration` que aparece é só informativo — a ferramenta roda do
-lado do servidor, não precisa de mirror local.
+`gemini-3-pro-image` e `nano-banana-2` continuam sem HAR — se algum dos
+dois der o erro `resposta inesperada: Content-Type ''` (200 OK com corpo
+vazio), é sinal de id incorreto; mande um HAR de uma geração bem-sucedida
+com esse modelo específico pra eu confirmar o id certo.
 
-Se você conseguir um HAR de um desses 4 modelos gerando imagem com
-sucesso na UI web do MeliGPT (mesmo processo de sempre), eu implemento o
-formato certo.
+Vale lembrar: gerar imagem também funciona por qualquer modelo de CHAT
+normal (ex.: `gpt-5.6-sol`) — o modelo aciona uma tool call
+`ImageGeneration` do lado do MeliGPT, e o link `/api/media/...` é
+detectado e baixado automaticamente (mesma lógica usada pros vídeos). O
+aviso `ferramenta não espelhada: ImageGeneration` que aparece nesse
+caminho é só informativo.
 
 ## Configuração
 
