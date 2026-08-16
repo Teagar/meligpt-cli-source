@@ -28,17 +28,20 @@ from meligpt.chat.service import (
     AmbiguousDiscoveryError,
     ChatFinished,
     GeneratedMedia,
+    ImageInput,
     InfoMessage,
     MirroredToolResult,
     TextChunk,
     WarningMessage,
     fork_conversation,
     run_chat,
+    upload_images,
 )
 from meligpt.clients.meligpt_http import ForkOption
 from meligpt.config import Settings, get_settings
 from meligpt.exceptions import MeliGPTError
 from meligpt.logging import configure_logging, new_request_id
+from meligpt.media_upload import sniff_content_type
 from meligpt.tools.registry import build_default_registry
 from meligpt.ui import console
 
@@ -167,6 +170,19 @@ def _add_chat_arguments(parser: argparse.ArgumentParser) -> None:
             "Onde salvar imagens/vídeos gerados neste turno (caminho relativo à "
             "raiz de arquivos configurada, ou absoluto em modo de acesso total). "
             "Sem isso, usa o destino padrão (MELIGPT_MEDIA_DIR / config_dir/generated-images)."
+        ),
+    )
+    parser.add_argument(
+        "--image",
+        action="append",
+        dest="images",
+        default=[],
+        help=(
+            "Caminho de uma imagem local para anexar à mensagem (input multimodal — "
+            "ex.: 'descreva essa imagem'). Pode ser usado várias vezes para anexar "
+            "mais de uma. Diferente de -f/--file: aquele injeta o CONTEÚDO TEXTUAL "
+            "de um arquivo no prompt; --image faz upload de verdade "
+            "(POST /api/files/images, confirmado por HAR real) e anexa como imagem."
         ),
     )
     parser.add_argument("message", nargs="*")
@@ -377,6 +393,35 @@ async def _run_chat_command(args: argparse.Namespace, settings: Settings) -> int
             return None
         return Path(input("Caminho do arquivo HAR: ").strip())
 
+    attachments = None
+    if args.images:
+        images: list[ImageInput] = []
+        for image_path in args.images:
+            path = Path(image_path).expanduser()
+            try:
+                data = path.read_bytes()
+            except OSError as exc:
+                console.error(f"não foi possível ler '{image_path}': {exc}")
+                return 1
+            images.append(
+                ImageInput(
+                    data=data,
+                    filename=path.name,
+                    content_type=sniff_content_type(data),
+                )
+            )
+        try:
+            attachments = await upload_images(
+                images,
+                settings=settings,
+                payload_endpoint=model_info.payload_endpoint if model_info else "openAI",
+                interactive=sys.stdin.isatty(),
+                prompt_for_har=prompt_for_har,
+            )
+        except MeliGPTError as exc:
+            console.error(exc.message)
+            return 1
+
     console.stream_start()
     had_output = False
     try:
@@ -391,6 +436,7 @@ async def _run_chat_command(args: argparse.Namespace, settings: Settings) -> int
             prompt_for_har=prompt_for_har,
             model_info=model_info,
             media_dir=args.media_dir,
+            attachments=attachments,
         ):
             if isinstance(event, TextChunk):
                 console.stream_chunk(event.text)

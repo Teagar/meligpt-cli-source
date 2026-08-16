@@ -327,14 +327,14 @@ catálogo local fixo, dividido em três categorias
 (`meligpt models` agrupa a saída assim):
 
 - **GERAL (chat)** — 47 modelos.
-- **IMAGEM** — 7 modelos.
+- **IMAGEM** — 8 modelos.
 - **VÍDEO** — 4 modelos.
 
 Ver `.env.example` para `MELIGPT_MODELS_URL` / `MELIGPT_MODELS_CACHE_SECONDS`.
 
 ### IDs confirmados vs. melhor-esforço
 
-**17** desses modelos (8 de chat + 4 de vídeo + 5 de imagem) foram
+**18** desses modelos (8 de chat + 4 de vídeo + 6 de imagem) foram
 confirmados por HAR real — uma chamada de verdade, observada ao vivo, que
 funcionou. O resto do catálogo veio colado da UI do MeliGPT (nome +
 provedor visíveis no seletor), sem o id interno usado no payload — então
@@ -350,6 +350,8 @@ reais dos modelos open-weight da OpenAI.
 `gemini-2.5-flash-image`; "Imagen 3.0 Generate" não é
 `imagen-3.0-generate`, falta o sufixo `-002` real
 (`imagen-3.0-generate-002`). Os dois já estão corrigidos no catálogo.
+Outro HAR (`import.har`, upload de imagem) revelou ainda um SEXTO modelo
+de imagem confirmado que nem estava na lista da UI: `gemini-3.1-flash-image`.
 
 Todo modelo inferido sai marcado `confirmed: false` — em `meligpt models`
 (`[NÃO CONFIRMADO]`) e em `GET /v1/models`/`GET /v1/models/{id}` (campo
@@ -359,18 +361,19 @@ Todo modelo inferido sai marcado `confirmed: false` — em `meligpt models`
 desconhecido" ou similar), é só corrigir a string do id em
 `src/meligpt/catalog.py` — é o único lugar que precisa mudar, não tem id
 espalhado em mais nenhum arquivo. Se puder, mande um HAR da chamada que
-funcionou (mesmo processo usado pra confirmar os 12 originais e o fork:
+funcionou (mesmo processo usado pra confirmar os originais e o fork:
 `Network` do DevTools → filtra por `/api/ask/` → botão direito → "Save
 all as HAR") pra eu marcar como `confirmed: true` de vez.
 
 ### Modelos de imagem "dedicados"
 
-Confirmados por HAR real (2026-08-15, `tudo.har`) — geração de ponta a
-ponta funcionando: `gemini-2.5-flash-image` ("Nano Banana"),
-`gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2` e
-`imagen-3.0-generate-002` ("Imagen 3.0 Generate"). Todos usam a mesma
-rota `/api/ask/<endpoint>` e o mesmo formato de payload do chat/vídeo —
-o problema anterior era puramente id errado, não formato de requisição.
+Confirmados por HAR real (2026-08-15, `tudo.har` + `import.har`) —
+geração de ponta a ponta funcionando: `gemini-2.5-flash-image` ("Nano
+Banana"), `gemini-3.1-flash-image`, `gpt-image-1-mini`, `gpt-image-1.5`,
+`gpt-image-2` e `imagen-3.0-generate-002` ("Imagen 3.0 Generate"). Todos
+usam a mesma rota `/api/ask/<endpoint>` e o mesmo formato de payload do
+chat/vídeo — o problema anterior era puramente id errado, não formato de
+requisição.
 
 `gemini-3-pro-image` e `nano-banana-2` continuam sem HAR — se algum dos
 dois der o erro `resposta inesperada: Content-Type ''` (200 OK com corpo
@@ -383,6 +386,42 @@ normal (ex.: `gpt-5.6-sol`) — o modelo aciona uma tool call
 detectado e baixado automaticamente (mesma lógica usada pros vídeos). O
 aviso `ferramenta não espelhada: ImageGeneration` que aparece nesse
 caminho é só informativo.
+
+## Anexar imagens (input multimodal)
+
+Confirmado por HAR real (`import.har`, 2026-08-15): dá pra mandar uma
+imagem JUNTO com a mensagem (ex.: "descreva essa imagem", "anima essa
+foto num RPG 32 bit") — não só receber imagens geradas, mas também
+mandar uma como entrada.
+
+**Fluxo (dois passos, ambos implementados em `chat/service.py`):**
+1. `POST /api/files/images` (multipart: arquivo + dimensões + o
+   `endpoint` do modelo alvo) — devolve um `file_id`/`filepath` reais.
+2. Esse `file_id`/`filepath` entra no campo `"files"` do próximo
+   `POST /api/ask/{endpoint}`.
+
+**Pelo OpenClaude/qualquer cliente de visão OpenAI-compatible:** manda a
+mensagem no formato de visão padrão da OpenAI —
+`content: [{"type":"text","text":"..."}, {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}]`.
+O adaptador (`api/openai_compat.py`) detecta automaticamente, faz o
+upload, e anexa ao turno. URLs `http(s)` (não só `data:` inline) também
+são aceitas — a imagem é baixada primeiro. Uma imagem que não dá pra
+decodificar/baixar é ignorada (aviso no log), sem derrubar a
+requisição inteira.
+
+**Pela CLI:**
+```bash
+meligpt chat --image foto.png "descreva essa imagem"
+meligpt chat --image foto.png --image outra.jpg "compare essas duas imagens"
+```
+`--image` é diferente de `-f`/`--file`: aquele injeta o *conteúdo
+textual* de um arquivo no prompt (pra código-fonte, por exemplo);
+`--image` faz upload de verdade e anexa como imagem.
+
+Dimensões e Content-Type são detectados automaticamente a partir dos
+bytes (`meligpt/media_upload.py`, PNG/JPEG/GIF/WEBP — sem depender de
+Pillow); o valor mandado não precisa ser exato, o servidor recalcula e
+devolve as dimensões reais.
 
 ## Configuração
 

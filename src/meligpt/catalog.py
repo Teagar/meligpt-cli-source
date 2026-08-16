@@ -232,17 +232,30 @@ _CHAT_MODELS_UNCONFIRMED: tuple[ModelInfo, ...] = (
 
 _CHAT_MODELS: tuple[ModelInfo, ...] = _CHAT_MODELS_CONFIRMED + _CHAT_MODELS_UNCONFIRMED
 
-#: Modelos de IMAGEM vistos no seletor. Cinco dos sete têm HAR real
+#: Modelos de IMAGEM vistos no seletor. Seis dos oito têm HAR real
 #: confirmado (gerações bem-sucedidas de ponta a ponta, 2026-08-15,
-#: `tudo.har`) — inclusive revelando que os ids reais de "Nano Banana" e
-#: "Imagen 3.0 Generate" eram DIFERENTES do que a convenção de
-#: nomenclatura sugeria (não é `nano-banana`, é `gemini-2.5-flash-image`;
-#: não é `imagen-3.0-generate`, é `imagen-3.0-generate-002`) — prova de
-#: que inferir por convenção nem sempre acerta, daí a importância de
-#: confirmar por HAR sempre que possível. "Nano Banana 2" e "Gemini 3 Pro
-#: Image" continuam sem HAR — `confirmed=False`.
+#: `tudo.har` + `import.har`) — inclusive revelando que os ids reais de
+#: "Nano Banana" e "Imagen 3.0 Generate" eram DIFERENTES do que a
+#: convenção de nomenclatura sugeria (não é `nano-banana`, é
+#: `gemini-2.5-flash-image`; não é `imagen-3.0-generate`, é
+#: `imagen-3.0-generate-002`) — prova de que inferir por convenção nem
+#: sempre acerta, daí a importância de confirmar por HAR sempre que
+#: possível. "Nano Banana 2" e "Gemini 3 Pro Image" continuam sem HAR —
+#: `confirmed=False`.
 _IMAGE_MODELS: tuple[ModelInfo, ...] = (
     _model("gemini-2.5-flash-image", "Nano Banana", "google", "google", type="image"),
+    _model(
+        # Visto num HAR de upload+geração de imagem (`import.har`,
+        # 2026-08-15) — NÃO estava na lista de modelos colada pelo
+        # usuário (`meligpt models`), mas é um id real e distinto do
+        # `gemini-2.5-flash-image` acima (conversa/gerações confirmadas
+        # com sucesso). Nome inferido (não visto na UI diretamente).
+        "gemini-3.1-flash-image",
+        "Gemini 3.1 Flash Image",
+        "google",
+        "google",
+        type="image",
+    ),
     _model(
         "gemini-3-pro-image",
         "Gemini 3 Pro Image",
