@@ -151,3 +151,14 @@ def test_fork_subcommand_not_swallowed_by_default_chat() -> None:
 
     args = _parse(["fork", "conv-1", "msg-1"])
     assert args.command == "fork"
+
+
+def test_chat_image_flag_repeatable() -> None:
+    args = _parse(["chat", "--image", "a.png", "--image", "b.jpg", "descreva"])
+    assert args.images == ["a.png", "b.jpg"]
+    assert args.message == ["descreva"]
+
+
+def test_chat_image_flag_defaults_to_empty_list() -> None:
+    args = _parse(["chat", "oi"])
+    assert args.images == []

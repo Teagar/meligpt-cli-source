@@ -21,7 +21,7 @@ from meligpt.auth.token_manager import HarPromptCallback, TokenManager
 from meligpt.catalog import ModelInfo
 from meligpt.chat.events import FinalTextEvent, TextDeltaEvent, ToolCallEvent
 from meligpt.chat.prompt_builder import interpret_prompt
-from meligpt.clients.meligpt_http import ForkOption, MeliGPTClient
+from meligpt.clients.meligpt_http import ForkOption, MeliGPTClient, file_entry_from_upload
 from meligpt.config import Settings
 from meligpt.exceptions import MeliGPTError, RecoveryFailedError, UpstreamHTTPError
 from meligpt.filesystem import discovery
@@ -232,6 +232,7 @@ async def run_chat(
     media_dir: str | None = None,
     conversation_id: str | None = None,
     parent_message_id: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[ChatServiceEvent]:
     """Executa um turno completo de chat, produzindo eventos incrementais.
 
@@ -247,6 +248,14 @@ async def run_chat(
     ``response_message_id`` desta resposta (quando o backend os confirma)
     saem em :class:`ChatFinished`, para quem chamou guardar e reusar no
     próximo turno.
+
+    ``attachments``, quando informado, são imagens já enviadas via
+    :func:`upload_images` (entradas no formato de
+    :func:`meligpt.clients.meligpt_http.file_entry_from_upload`) —
+    anexadas a esta mensagem como input multimodal. Chamado
+    ``attachments`` (não ``files``) pra não colidir com a variável local
+    abaixo, que é sobre descoberta de arquivos LOCAIS pro contexto do
+    prompt — conceito completamente diferente.
     """
 
     files = list(explicit_files or [])
@@ -310,6 +319,8 @@ async def run_chat(
         extra_kwargs["conversation_id"] = conversation_id
     if parent_message_id is not None:
         extra_kwargs["parent_message_id"] = parent_message_id
+    if attachments:
+        extra_kwargs["files"] = attachments
 
     while True:
         try:
@@ -464,6 +475,84 @@ async def fork_conversation(
         message_count=len(messages),
         raw=raw,
     )
+
+
+@dataclass(frozen=True)
+class ImageInput:
+    """Uma imagem a enviar via :func:`upload_images` — bytes crus mais o
+    metadado mínimo que ``POST /api/files/images`` espera."""
+
+    data: bytes
+    filename: str
+    content_type: str
+
+
+async def upload_images(
+    images: list[ImageInput],
+    *,
+    settings: Settings,
+    payload_endpoint: str,
+    interactive: bool = False,
+    prompt_for_har: HarPromptCallback | None = None,
+    credentials: Credentials | None = None,
+) -> list[dict[str, Any]]:
+    """Envia uma ou mais imagens (``POST /api/files/images`` por imagem,
+    sequencial) e devolve as entradas prontas pra usar em
+    ``run_chat(attachments=...)``.
+
+    ``payload_endpoint`` é o mesmo valor usado no payload de chat (ex.:
+    ``"google"``, ``"bedrock"``) — confirmado por HAR real
+    (``import.har``) que é isso, não a rota HTTP, que o upload espera no
+    campo ``endpoint`` do formulário.
+
+    Uploads são sequenciais (não paralelos) de propósito: evita corrida
+    entre múltiplas tentativas de recuperação de 401 caso o token expire
+    no meio de vários anexos. Segue a mesma política de
+    :func:`fork_conversation`/:func:`run_chat`: no máximo uma tentativa
+    de reimportar credenciais via HAR, só em modo interativo.
+    """
+
+    token_manager = TokenManager(settings)
+    if credentials is None:
+        credentials = token_manager.load_credentials()
+
+    client = MeliGPTClient(settings)
+    results: list[dict[str, Any]] = []
+
+    for image in images:
+        attempted_recovery = False
+        while True:
+            try:
+                raw = await client.upload_image(
+                    file_bytes=image.data,
+                    filename=image.filename,
+                    content_type=image.content_type,
+                    credentials=credentials,
+                    payload_endpoint=payload_endpoint,
+                )
+                break
+            except UpstreamHTTPError as exc:
+                if exc.status_code != 401 or attempted_recovery:
+                    raise
+                try:
+                    credentials = await token_manager.recover_from_401(
+                        exc, interactive=interactive, prompt_for_har=prompt_for_har
+                    )
+                except RecoveryFailedError:
+                    raise
+                attempted_recovery = True
+                continue
+
+        results.append(file_entry_from_upload(raw))
+        log_with_fields(
+            _logger,
+            20,
+            "imagem enviada",
+            filename=image.filename,
+            file_id=results[-1].get("file_id"),
+        )
+
+    return results
 
 
 async def _download_generated_media(

@@ -16,8 +16,8 @@ from meligpt.exceptions import ModelNotFoundError, ProviderNotFoundError
 
 def test_fallback_models_have_gpt_sol_first() -> None:
     assert FALLBACK_MODELS[0].id == "gpt-5.6-sol"
-    assert len(FALLBACK_MODELS) == 58
-    assert len({m.id for m in FALLBACK_MODELS}) == 58
+    assert len(FALLBACK_MODELS) == 59
+    assert len({m.id for m in FALLBACK_MODELS}) == 59
 
 
 def test_fallback_models_include_video_models() -> None:
@@ -34,6 +34,7 @@ def test_fallback_models_include_image_models() -> None:
     image_ids = {m.id for m in FALLBACK_MODELS if m.type == "image"}
     assert image_ids == {
         "gemini-2.5-flash-image",
+        "gemini-3.1-flash-image",
         "gemini-3-pro-image",
         "nano-banana-2",
         "gpt-image-1-mini",
@@ -41,12 +42,14 @@ def test_fallback_models_include_image_models() -> None:
         "gpt-image-2",
         "imagen-3.0-generate-002",
     }
-    # Confirmados por HAR real (2026-08-15, `tudo.har`) — inclusive
-    # revelando que "Nano Banana" e "Imagen 3.0 Generate" tinham ids
-    # diferentes do que a convenção de nomenclatura sugeria.
+    # Confirmados por HAR real (2026-08-15, `tudo.har` + `import.har`) —
+    # inclusive revelando que "Nano Banana" e "Imagen 3.0 Generate" tinham
+    # ids diferentes do que a convenção de nomenclatura sugeria, e um
+    # modelo (`gemini-3.1-flash-image`) que nem estava na lista da UI.
     confirmed_image_ids = {m.id for m in FALLBACK_MODELS if m.type == "image" and m.confirmed}
     assert confirmed_image_ids == {
         "gemini-2.5-flash-image",
+        "gemini-3.1-flash-image",
         "gpt-image-1-mini",
         "gpt-image-1.5",
         "gpt-image-2",
@@ -67,10 +70,12 @@ def test_nano_banana_display_name_maps_to_real_id() -> None:
 
 
 def test_fallback_models_confirmed_flag() -> None:
-    """17 modelos com HAR real: os 8 chat + 4 vídeo do checkpoint
-    original, mais 5 de imagem confirmados em 2026-08-15 (`tudo.har`).
-    Todo o resto do catálogo (colado da UI, sem id interno visível) é
-    melhor-esforço."""
+    """18 modelos com HAR real: os 8 chat + 4 vídeo do checkpoint
+    original, mais 6 de imagem confirmados em 2026-08-15 (`tudo.har` +
+    `import.har`, este último trazendo um modelo extra
+    `gemini-3.1-flash-image` que nem estava na lista da UI). Todo o resto
+    do catálogo (colado da UI, sem id interno visível) é melhor-esforço.
+    """
 
     confirmed_ids = {m.id for m in FALLBACK_MODELS if m.confirmed}
     assert confirmed_ids == {
@@ -87,6 +92,7 @@ def test_fallback_models_confirmed_flag() -> None:
         "veo-3.1-fast-generate-001",
         "happyhorse-1.0-t2v",
         "gemini-2.5-flash-image",
+        "gemini-3.1-flash-image",
         "gpt-image-1-mini",
         "gpt-image-1.5",
         "gpt-image-2",
@@ -135,6 +141,7 @@ async def test_list_models_filters_by_provider_and_endpoint(settings) -> None:
         "gemini-2.5-pro",
         "gemini-3-pro-image",
         "gemini-2.5-flash-image",
+        "gemini-3.1-flash-image",
         "nano-banana-2",
         "imagen-3.0-generate-002",
         "veo-3.1-generate-001",

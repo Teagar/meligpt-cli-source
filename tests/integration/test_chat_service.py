@@ -788,3 +788,68 @@ async def test_fork_conversation_propagates_upstream_errors(settings, monkeypatc
         await service_module.fork_conversation(
             conversation_id="conv-1", message_id="msg-1", settings=settings
         )
+
+
+# --- upload_images -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_upload_images_returns_file_entry_per_image(settings, monkeypatch) -> None:
+    import meligpt.chat.service as service_module
+
+    calls: list[dict] = []
+
+    async def fake_upload(
+        self, *, file_bytes, filename, content_type, credentials, payload_endpoint, **kwargs
+    ):
+        calls.append({"filename": filename, "payload_endpoint": payload_endpoint})
+        return {
+            "fileId": f"file-{filename}",
+            "file_id": f"file-{filename}",
+            "filepath": f"/images/x/{filename}",
+            "type": content_type,
+            "width": 100,
+            "height": 200,
+        }
+
+    monkeypatch.setattr(service_module.MeliGPTClient, "upload_image", fake_upload)
+
+    images = [
+        service_module.ImageInput(data=b"a", filename="a.png", content_type="image/png"),
+        service_module.ImageInput(data=b"b", filename="b.jpg", content_type="image/jpeg"),
+    ]
+    result = await service_module.upload_images(
+        images, settings=settings, payload_endpoint="google"
+    )
+
+    assert len(result) == 2
+    assert result[0]["file_id"] == "file-a.png"
+    assert result[0]["filepath"] == "/images/x/a.png"
+    assert result[0]["width"] == 100
+    assert result[1]["file_id"] == "file-b.jpg"
+    # Sequencial, na ordem em que as imagens foram passadas.
+    assert [c["filename"] for c in calls] == ["a.png", "b.jpg"]
+    assert all(c["payload_endpoint"] == "google" for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_upload_images_propagates_upstream_errors(settings, monkeypatch) -> None:
+    import meligpt.chat.service as service_module
+    from meligpt.exceptions import UpstreamForbiddenError
+
+    async def fake_upload_raises(self, **kwargs):
+        raise UpstreamForbiddenError("nao autorizado", status_code=403)
+
+    monkeypatch.setattr(service_module.MeliGPTClient, "upload_image", fake_upload_raises)
+
+    images = [service_module.ImageInput(data=b"a", filename="a.png", content_type="image/png")]
+    with pytest.raises(UpstreamForbiddenError):
+        await service_module.upload_images(images, settings=settings, payload_endpoint="openAI")
+
+
+@pytest.mark.asyncio
+async def test_upload_images_empty_list_returns_empty(settings) -> None:
+    import meligpt.chat.service as service_module
+
+    result = await service_module.upload_images([], settings=settings, payload_endpoint="openAI")
+    assert result == []

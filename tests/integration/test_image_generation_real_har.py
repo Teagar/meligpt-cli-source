@@ -1,6 +1,7 @@
 """Regressão end-to-end usando respostas SSE REAIS de gerações de imagem
-bem-sucedidas, capturadas via HAR (`tudo.har`) pelo usuário em
-2026-08-15, e salvas em ``tests/fixtures/image_generation_sse_*.txt``.
+bem-sucedidas, capturadas via HAR (`tudo.har` e `import.har`) pelo
+usuário em 2026-08-15, e salvas em
+``tests/fixtures/image_generation_sse_*.txt``.
 
 Isso existe porque, na primeira leva de modelos de imagem "dedicados"
 adicionados ao catálogo, os ids de dois deles estavam errados — só
@@ -13,7 +14,11 @@ detectável com dados reais:
 
 Os outros três (`gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`) já
 batiam com o id inferido por convenção, mas agora têm HAR confirmando de
-qualquer forma.
+qualquer forma. `import.har` trouxe ainda um SEXTO modelo confirmado,
+`gemini-3.1-flash-image`, que nem estava na lista de modelos colada pelo
+usuário — descoberto incidentalmente ao confirmar o fluxo de upload de
+imagem (input multimodal, ver `test_meligpt_client.py::test_upload_image_*`
+e `test_openai_compat.py::test_openai_chat_completions_uploads_attached_image`).
 
 Diferente do vídeo (`<videoplayer url="..."/>`), a resposta final de
 imagem vem como markdown padrão: ``![...](/api/media/...)`` — mas a
@@ -67,6 +72,16 @@ CONFIRMED_IMAGE_CASES = [
         "image_generation_sse_gpt_image_1_5.txt",
         "/api/ask/openAI",
         "gpt_image_1_ed46f6a2-03dd-42f4-8b1a-fc9974d53489.png",
+    ),
+    (
+        # Vindo de `import.har` (upload de imagem + geração), não de
+        # `tudo.har` — modelo que nem estava na lista da UI colada pelo
+        # usuário, mas confirmado por HAR real (turno de continuação de
+        # conversa, com anexo).
+        "gemini-3.1-flash-image",
+        "image_generation_sse_gemini_3_1_flash_image_with_attachment.txt",
+        "/api/ask/google",
+        "downloaded_e899aaa2-a6bf-402b-bba4-25272dfb3dbd.png",
     ),
 ]
 

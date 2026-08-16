@@ -121,6 +121,31 @@ pra replicar, o MeliGPT já é a fonte da verdade. Exposto via
 `chat/service.py:fork_conversation()` (mesma política de retry de 401 que
 `run_chat`), `POST /v1/conversations/fork` e `meligpt fork`.
 
+## Upload de imagem (input multimodal)
+
+`clients/meligpt_http.py:MeliGPTClient.upload_image()` chama
+`POST /api/files/images` (multipart: `file`, `file_id` temporário,
+`width`/`height`, `endpoint` — confirmado por HAR real, `import.har`,
+2026-08-15). `media_upload.py` detecta dimensões/content-type a partir
+dos bytes (PNG/JPEG/GIF/WEBP puro-Python, sem Pillow) quando não
+informados — o servidor recalcula de qualquer forma.
+
+`chat/service.py:upload_images()` faz o upload sequencial de uma lista de
+`ImageInput` (mesma política de retry de 401 que `run_chat`/
+`fork_conversation`) e devolve entradas prontas pra
+`run_chat(attachments=...)`, que as encaminha como `files[]` no payload
+de `POST /api/ask/{endpoint}` (só quando há algo — omitido inteiramente
+sem anexo, confirmado por HAR).
+
+Dois pontos de entrada:
+- **CLI**: `meligpt chat --image caminho.png "descreva essa imagem"`.
+- **`api/openai_compat.py`**: `ChatMessage.content` aceita o formato de
+  visão da OpenAI (`[{"type":"text",...},{"type":"image_url",...}]`) —
+  detecta blocos `image_url` na última mensagem, decodifica `data:` URLs
+  ou baixa URLs `http(s)`, faz upload, e anexa ao turno. Cobre o caso
+  mais importante: um cliente de visão OpenAI-compatible (OpenClaude
+  incluso) anexando uma imagem.
+
 ## Registro de ferramentas
 
 `tools/registry.py` expõe um `ToolRegistry` (nome → instância). Nenhum

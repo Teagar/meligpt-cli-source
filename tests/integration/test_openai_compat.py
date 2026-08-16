@@ -783,3 +783,168 @@ def test_openai_chat_completions_streaming_embeds_generated_image_markdown(
     )
     assert response.status_code == 200
     assert "/generated-images/image_gato.png" in response.text
+
+
+# --- input multimodal (imagem anexada, formato de visão OpenAI) --------
+#
+# Confirmado por HAR real (`import.har`, 2026-08-15): upload via
+# POST /api/files/images, depois `files: [...]` no payload de chat.
+
+
+_TINY_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+
+
+def test_openai_chat_completions_uploads_attached_image(client: TestClient, monkeypatch) -> None:
+    import meligpt.clients.meligpt_http as client_module
+
+    upload_calls: list[dict] = []
+    ask_calls: list[dict] = []
+
+    async def fake_upload(
+        self, *, file_bytes, filename, content_type, credentials, payload_endpoint, **kwargs
+    ):
+        upload_calls.append({"filename": filename, "payload_endpoint": payload_endpoint})
+        return {
+            "fileId": "real-file-id",
+            "file_id": "real-file-id",
+            "filepath": "/images/u1/real-file-id__foto.png",
+            "type": "image/png",
+            "width": 1,
+            "height": 1,
+        }
+
+    async def fake_stream(self, *, prompt, message_id, credentials, **kwargs):
+        ask_calls.append({"prompt": prompt, **kwargs})
+        yield {
+            "event": "message",
+            "data": {"final": True, "responseMessage": {"text": "vejo uma imagem 1x1"}},
+        }
+
+    monkeypatch.setattr(client_module.MeliGPTClient, "upload_image", fake_upload)
+    monkeypatch.setattr(client_module.MeliGPTClient, "stream_chat", fake_stream)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "meligpt",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "descreva essa imagem"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{_TINY_PNG_BASE64}"},
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "vejo uma imagem 1x1"
+
+    assert len(upload_calls) == 1
+    assert upload_calls[0]["payload_endpoint"] == "openAI"  # modelo default -> "meligpt"
+
+    assert len(ask_calls) == 1
+    assert ask_calls[0]["prompt"] == "descreva essa imagem"
+    assert ask_calls[0]["files"] == [
+        {
+            "file_id": "real-file-id",
+            "filepath": "/images/u1/real-file-id__foto.png",
+            "type": "image/png",
+            "height": 1,
+            "width": 1,
+        }
+    ]
+
+
+def test_openai_chat_completions_without_image_omits_files(client: TestClient, monkeypatch) -> None:
+    import meligpt.clients.meligpt_http as client_module
+
+    ask_calls: list[dict] = []
+
+    async def fake_stream(self, *, prompt, message_id, credentials, **kwargs):
+        ask_calls.append(kwargs)
+        yield {"event": "message", "data": {"final": True, "responseMessage": {"text": "ok"}}}
+
+    monkeypatch.setattr(client_module.MeliGPTClient, "stream_chat", fake_stream)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "meligpt", "messages": [{"role": "user", "content": "oi"}]},
+    )
+    assert response.status_code == 200
+    assert "files" not in ask_calls[0]
+
+
+def test_openai_chat_completions_text_only_multipart_content(
+    client: TestClient, monkeypatch
+) -> None:
+    """Conteúdo multimodal SEM nenhum bloco de imagem (só `type: "text"`)
+    deve funcionar igual a uma string simples — sem upload nenhum."""
+
+    import meligpt.clients.meligpt_http as client_module
+
+    upload_called = {"n": 0}
+
+    async def fake_upload(self, **kwargs):
+        upload_called["n"] += 1
+        raise AssertionError("não deveria chamar upload sem imagem")
+
+    async def fake_stream(self, *, prompt, message_id, credentials, **kwargs):
+        assert prompt == "só texto, sem imagem"
+        yield {"event": "message", "data": {"final": True, "responseMessage": {"text": "ok"}}}
+
+    monkeypatch.setattr(client_module.MeliGPTClient, "upload_image", fake_upload)
+    monkeypatch.setattr(client_module.MeliGPTClient, "stream_chat", fake_stream)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "meligpt",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "só texto, sem imagem"}],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200
+    assert upload_called["n"] == 0
+
+
+def test_openai_chat_completions_ignores_undecodable_image_url(
+    client: TestClient, monkeypatch
+) -> None:
+    """Uma image_url que não é data URL nem http(s) alcançável é ignorada
+    (aviso no log), sem derrubar a requisição inteira."""
+
+    import meligpt.clients.meligpt_http as client_module
+
+    async def fake_stream(self, *, prompt, message_id, credentials, **kwargs):
+        yield {"event": "message", "data": {"final": True, "responseMessage": {"text": "ok"}}}
+
+    monkeypatch.setattr(client_module.MeliGPTClient, "stream_chat", fake_stream)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "meligpt",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "descreva"},
+                        {"type": "image_url", "image_url": {"url": "not-a-real-url"}},
+                    ],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200

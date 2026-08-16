@@ -10,6 +10,7 @@ Não bloqueia o event loop (I/O via ``httpx`` assíncrono) e nunca loga
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import AsyncIterator
 from enum import StrEnum
 from typing import Any
@@ -41,6 +42,7 @@ def _build_payload(
     payload_endpoint: str = "openAI",
     conversation_id: str | None = None,
     parent_message_id: str | None = None,
+    files: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Monta o payload de ``POST /api/ask/{endpoint}``.
 
@@ -51,9 +53,17 @@ def _build_payload(
     preenchidos com o ``messageId`` da resposta do turno anterior. Sem
     eles (default), mantém o comportamento antigo: sempre uma conversa
     nova (``conversationId: null``, ``parentMessageId`` raiz).
+
+    ``files``, quando informado, são anexos já enviados via
+    :meth:`MeliGPTClient.upload_image` (cada item no formato devolvido
+    por ``_file_entry_from_upload``). Confirmado por HAR real
+    (``import.har``, 2026-08-15): o campo ``"files"`` só aparece no
+    payload quando há de fato um anexo — omitido inteiramente (não uma
+    lista vazia) nas requisições sem anexo, então só incluímos a chave
+    quando há algo pra mandar.
     """
 
-    return {
+    payload: dict[str, Any] = {
         "text": prompt,
         "sender": "User",
         "isCreatedByUser": True,
@@ -78,6 +88,9 @@ def _build_payload(
         "key": "newer",
         "isContinued": False,
     }
+    if files:
+        payload["files"] = files
+    return payload
 
 
 def _build_headers(
@@ -94,6 +107,25 @@ def _build_headers(
         "Origin": settings.base_url,
         "Referer": settings.resolved_referer(),
         "User-Agent": settings.user_agent,
+    }
+
+
+def file_entry_from_upload(upload_response: dict[str, Any]) -> dict[str, Any]:
+    """Converte a resposta de :meth:`MeliGPTClient.upload_image` numa
+    entrada de ``files[]`` pro payload de chat — mesmo shape visto no HAR
+    real (``import.har``): ``file_id``, ``filepath``, ``type``,
+    ``height``, ``width``. Usa ``fileId``/``file_id`` (ambos presentes,
+    mesmo valor) e ignora os demais campos da resposta (``bytes``,
+    ``source``, ``temp_file_id`` etc.) que não fazem parte do payload de
+    chat.
+    """
+
+    return {
+        "file_id": upload_response.get("file_id") or upload_response.get("fileId"),
+        "filepath": upload_response.get("filepath"),
+        "type": upload_response.get("type"),
+        "height": upload_response.get("height"),
+        "width": upload_response.get("width"),
     }
 
 
@@ -141,6 +173,7 @@ class MeliGPTClient:
         model_info: ModelInfo | None = None,
         conversation_id: str | None = None,
         parent_message_id: str | None = None,
+        files: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Envia a mensagem e produz eventos SSE já decodificados (JSON).
 
@@ -157,6 +190,9 @@ class MeliGPTClient:
         continuam uma conversa MeliGPT existente (ver
         :func:`_build_payload`) — dando memória real de conversa sem
         precisar reenviar a transcrição inteira a cada turno.
+
+        ``files``, quando informado, anexa imagens já enviadas via
+        :meth:`upload_image` a esta mensagem (input multimodal).
 
         Levanta:
         - :class:`UpstreamHTTPError` (com ``status_code=401``) em token
@@ -185,6 +221,7 @@ class MeliGPTClient:
             payload_endpoint=payload_endpoint,
             conversation_id=conversation_id,
             parent_message_id=parent_message_id,
+            files=files,
         )
 
         try:
@@ -328,3 +365,101 @@ class MeliGPTClient:
             return response.json()
         except ValueError as exc:
             raise UpstreamError(f"resposta inválida ao bifurcar conversa: {exc}") from exc
+
+    async def upload_image(
+        self,
+        *,
+        file_bytes: bytes,
+        filename: str,
+        content_type: str,
+        credentials: Credentials,
+        payload_endpoint: str,
+        width: int | None = None,
+        height: int | None = None,
+        temp_file_id: str | None = None,
+    ) -> dict[str, Any]:
+        """``POST /api/files/images`` — envia uma imagem pra anexar numa
+        mensagem (input multimodal). Confirmado por HAR real
+        (``import.har``, 2026-08-15): ``multipart/form-data`` com campos
+        ``file`` (binário), ``file_id`` (uuid temporário gerado pelo
+        cliente), ``width``/``height`` e ``endpoint`` (o mesmo valor do
+        campo ``"endpoint"`` do payload de chat — ``payload_endpoint`` de
+        :class:`meligpt.catalog.ModelInfo` — não a rota HTTP).
+
+        ``width``/``height``, quando omitidos, são detectados a partir
+        dos bytes (:func:`meligpt.media_upload.sniff_dimensions`) — o
+        valor mandado aqui não precisa ser exato, o servidor recalcula e
+        devolve as dimensões reais na resposta.
+
+        A resposta (JSON) traz ``file_id``/``fileId`` (id REAL do arquivo
+        no servidor — diferente do ``temp_file_id`` que mandamos),
+        ``filepath``, ``type``, ``width``, ``height`` — é esse dict que
+        vira uma entrada de ``files[]`` no payload de
+        ``POST /api/ask/{endpoint}`` (ver :func:`_build_payload`).
+        """
+
+        from meligpt.media_upload import sniff_dimensions
+
+        if width is None or height is None:
+            dims = sniff_dimensions(file_bytes)
+            if width is None:
+                width = dims[0] if dims else 0
+            if height is None:
+                height = dims[1] if dims else 0
+
+        endpoint = f"{self._settings.base_url}/api/files/images"
+        headers = {
+            "Authorization": credentials.authorization_header(),
+            "Cookie": credentials.cookie_header,
+            "Accept": "application/json",
+            "Accept-Language": self._settings.accept_language,
+            "Origin": self._settings.base_url,
+            "Referer": self._settings.resolved_referer(),
+            "User-Agent": self._settings.user_agent,
+        }
+        form_data = {
+            "file_id": temp_file_id or str(uuid.uuid4()),
+            "width": str(width),
+            "height": str(height),
+            "endpoint": payload_endpoint,
+        }
+        files = {"file": (filename, file_bytes, content_type)}
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout,
+                follow_redirects=False,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(endpoint, data=form_data, files=files, headers=headers)
+        except httpx.TimeoutException as exc:
+            raise UpstreamTimeoutError(f"timeout ao enviar imagem: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"falha de transporte ao enviar imagem: {exc}") from exc
+
+        if response.status_code != 200:
+            log_with_fields(
+                _logger,
+                30,
+                "API upstream retornou status inesperado ao enviar imagem",
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type"),
+            )
+            if response.status_code == 401:
+                raise UpstreamHTTPError("o access token ou a sessão expirou (401)", status_code=401)
+            if response.status_code == 403:
+                raise UpstreamForbiddenError(
+                    "requisição recusada (403) — verifique sessão, conta, VPN e "
+                    "política do serviço",
+                    status_code=403,
+                )
+            body = response.text[:500]
+            raise UpstreamHTTPError(
+                f"a API retornou HTTP {response.status_code} ao enviar imagem: {body!r}",
+                status_code=response.status_code,
+            )
+
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise UpstreamError(f"resposta inválida ao enviar imagem: {exc}") from exc
